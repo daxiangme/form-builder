@@ -1,0 +1,40 @@
+{
+  "name": "dx-form-workspace",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.12.4",
+  "engines": {
+    "node": ">=20.19.0",
+    "pnpm": ">=10.12.4"
+  },
+  "scripts": {
+    "build": "pnpm --filter @daxiangme/form-core build && pnpm --filter @daxiangme/form-adapter build && pnpm --filter @daxiangme/form-vue build && pnpm --filter @daxiangme/form-playground build",
+    "check:boundaries": "node scripts/check-package-boundaries.mjs",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint packages playground --max-warnings=0",
+    "lint:style": "stylelint \"packages/form-vue/src/**/*.{css,scss,vue}\" \"playground/element-plus-vue3/src/**/*.{css,scss,vue}\"",
+    "typecheck": "pnpm -r typecheck",
+    "verify": "pnpm format:check && pnpm lint && pnpm lint:style && pnpm check:boundaries && pnpm typecheck && pnpm build"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.29.7",
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^22.18.1",
+    "@vitejs/plugin-vue": "^6.0.1",
+    "eslint": "10.9.1",
+    "eslint-plugin-vue": "^10.4.0",
+    "globals": "^16.3.0",
+    "postcss-html": "^1.8.1",
+    "prettier": "^3.6.2",
+    "stylelint": "^16.23.1",
+    "stylelint-config-standard": "^39.0.0",
+    "typescript": "~5.6.3",
+    "typescript-eslint": "^8.42.0",
+    "vite": "^7.1.5",
+    "vite-plugin-dts": "^4.5.4",
+    "vue-eslint-parser": "^10.2.0",
+    "vue-tsc": "^3.0.6"
+  }
+}

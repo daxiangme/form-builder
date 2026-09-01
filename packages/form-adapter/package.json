@@ -1,0 +1,37 @@
+{
+  "name": "@daxiangme/form-adapter",
+  "version": "0.1.0",
+  "description": "DX Form 的本地预览与 DX BPM 宿主适配实现",
+  "type": "module",
+  "license": "MIT",
+  "author": "daxiangme",
+  "keywords": [
+    "form",
+    "adapter",
+    "upload",
+    "dx-bpm"
+  ],
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "vite build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "pack:dry-run": "npm pack --dry-run"
+  },
+  "dependencies": {
+    "@daxiangme/form-core": "0.1.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

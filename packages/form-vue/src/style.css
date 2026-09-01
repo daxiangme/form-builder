@@ -1,0 +1,36 @@
+.daxiang-form,
+.daxiang-form-modal,
+.daxiang-form-drawer {
+  --daxiang-form-bg: var(--el-bg-color);
+  --daxiang-form-surface: var(--el-bg-color-overlay);
+  --daxiang-form-fill: var(--el-fill-color-light);
+  --daxiang-form-fill-soft: var(--el-fill-color-extra-light);
+  --daxiang-form-border: var(--el-border-color);
+  --daxiang-form-border-light: var(--el-border-color-lighter);
+  --daxiang-form-text: var(--el-text-color-primary);
+  --daxiang-form-muted: var(--el-text-color-secondary);
+  --daxiang-form-primary: var(--el-color-primary);
+  --daxiang-form-danger: var(--el-color-danger);
+  --daxiang-form-space-1: 4px;
+  --daxiang-form-space-2: 8px;
+  --daxiang-form-space-3: 16px;
+  --daxiang-form-space-4: 24px;
+  --daxiang-form-space-5: 32px;
+  --daxiang-form-section-gap: 24px;
+  --daxiang-form-container-radius: var(--el-border-radius-base);
+
+  color: var(--daxiang-form-text);
+  color-scheme: light;
+}
+
+html.dark .daxiang-form,
+html.dark .daxiang-form-modal,
+html.dark .daxiang-form-drawer {
+  color-scheme: dark;
+}
+
+.daxiang-form *,
+.daxiang-form-modal *,
+.daxiang-form-drawer * {
+  box-sizing: border-box;
+}

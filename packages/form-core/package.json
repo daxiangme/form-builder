@@ -1,0 +1,35 @@
+{
+  "name": "@daxiangme/form-core",
+  "version": "0.1.0",
+  "description": "DX Form 的纯 TypeScript 表单文档、规则与运行核心",
+  "type": "module",
+  "license": "MIT",
+  "author": "daxiangme",
+  "keywords": [
+    "form",
+    "schema",
+    "validation",
+    "event-flow",
+    "low-code"
+  ],
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "vite build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "pack:dry-run": "npm pack --dry-run"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
