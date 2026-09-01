@@ -31,3 +31,7 @@ DX BPM Adapter 只使用已验证的发布表单附件和 OCR 路径。当前项
 ## 发布边界
 
 三个公开包锁步发布。公开 `package.json` 使用精确同版本依赖，pnpm workspace 只在本地把这些依赖链接到同仓包；tarball 和 Registry 中不得出现 `workspace:` 协议。发布顺序固定为 Core、Adapter、Vue，先进入 `next`，公开消费复验后再提升为 `latest`。
+
+## 首发基线
+
+2026-09-02 已公开发布 `@daxiangme/form-core`、`@daxiangme/form-adapter` 和 `@daxiangme/form-vue` 的 `0.1.0` 版本，`next` 与 `latest` 均指向该版本。公开消费工程使用 Vue 3、Element Plus、包内 Vue Plugin、运行值仓和本地 Adapter 完成类型检查与生产构建；后续三个包继续采用锁步版本，任何已发布内容变更均通过新版本交付，不覆盖或撤销历史版本。
