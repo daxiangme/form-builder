@@ -5,6 +5,15 @@
   "type": "module",
   "license": "MIT",
   "author": "daxiangme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/daxiangme/form-builder.git",
+    "directory": "packages/form-core"
+  },
+  "homepage": "https://github.com/daxiangme/form-builder#readme",
+  "bugs": {
+    "url": "https://github.com/daxiangme/form-builder/issues"
+  },
   "keywords": [
     "form",
     "schema",
