@@ -12,6 +12,12 @@
 - `FormRenderer` 通过 `modelValue` 受控维护 `DesignerRuntimeValueStore`，发出值更新、提交投影、重置、动作和运行警告。
 - 设计器的弹窗、抽屉、模块画布、高级行为、事件流和命令历史与运行渲染共用同一份 `DesignerDocument 1.0`。
 
+## 单一用户入口
+
+普通 Vue 3 宿主只安装并导入 `@daxiangme/form-vue`。Vue 包除 `FormDesigner`、`FormRenderer`、`DaxiangFormVue` 外，精选转发文档创建、编解码、诊断、序列化函数及常用运行类型，使基础设计、渲染与宿主 Adapter 注入不要求用户理解内部包边界。
+
+`@daxiangme/form-core` 与 `@daxiangme/form-adapter` 继续公开发布，服务于直接使用纯 TypeScript 内核或实现专用宿主适配的高级集成方；它们不进入普通用户的安装命令。Vue 包不得依赖 Adapter 包，依赖方向继续固定为 `form-vue -> form-core <- form-adapter`。
+
 ## Schema 约束
 
 `DesignerDocument 1.0` 只保存稳定、可序列化、可诊断的数据。接口地址、HTTP 方法、Token、函数、自由 CSS、任意组件属性与可执行脚本不得进入 Schema。
@@ -35,3 +41,7 @@ DX BPM Adapter 只使用已验证的发布表单附件和 OCR 路径。当前项
 ## 首发基线
 
 2026-09-02 已公开发布 `@daxiangme/form-core`、`@daxiangme/form-adapter` 和 `@daxiangme/form-vue` 的 `0.1.0` 版本，`next` 与 `latest` 均指向该版本。公开消费工程使用 Vue 3、Element Plus、包内 Vue Plugin、运行值仓和本地 Adapter 完成类型检查与生产构建；后续三个包继续采用锁步版本，任何已发布内容变更均通过新版本交付，不覆盖或撤销历史版本。
+
+## 0.1.1 入口与展示基线
+
+`0.1.1` 将 `@daxiangme/form-vue` 固定为唯一推荐入口，并由该包精选转发常用 Core 公共能力。GitHub 与 NPM 文档使用同一组版本固定产品截图，展示完整工作台、模块画布、高级字段配置、事件流、运行外壳和 Element Plus 深色主题。三个包继续锁步发布，已发布的 `0.1.0` 保持不可变。

@@ -1,6 +1,6 @@
 {
   "name": "@daxiangme/form-vue",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Vue 3 + Element Plus 表单设计器与运行渲染器",
   "type": "module",
   "license": "MIT",
@@ -42,7 +42,7 @@
     "pack:dry-run": "npm pack --dry-run"
   },
   "dependencies": {
-    "@daxiangme/form-core": "0.1.0",
+    "@daxiangme/form-core": "0.1.1",
     "@iconify-json/ri": "^1.2.5",
     "@iconify/vue": "^5.0.0",
     "dayjs": "^1.11.18",

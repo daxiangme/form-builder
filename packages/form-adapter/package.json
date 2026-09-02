@@ -1,6 +1,6 @@
 {
   "name": "@daxiangme/form-adapter",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "DX Form 的本地预览与 DX BPM 宿主适配实现",
   "type": "module",
   "license": "MIT",
@@ -38,7 +38,7 @@
     "pack:dry-run": "npm pack --dry-run"
   },
   "dependencies": {
-    "@daxiangme/form-core": "0.1.0"
+    "@daxiangme/form-core": "0.1.1"
   },
   "publishConfig": {
     "access": "public"

@@ -4,7 +4,7 @@
 
 <script setup lang="ts">
 import { icons } from '@iconify-json/ri'
-import { Icon, addCollection } from '@iconify/vue'
+import { Icon, addCollection } from '@iconify/vue/offline'
 
 defineOptions({ name: 'FormIcon', inheritAttrs: false })
 
