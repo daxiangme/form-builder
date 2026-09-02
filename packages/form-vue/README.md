@@ -8,6 +8,14 @@
 
 ## 安装
 
+已有 Vue 3 和 Element Plus 的应用只需要安装主包：
+
+```bash
+pnpm add @daxiangme/form-vue
+```
+
+主包要求 Vue `^3.5.0` 和 Element Plus `^2.11.0`。新建工程或尚未安装这两个 Peer Dependencies 时，可以一次性安装：
+
 ```bash
 pnpm add @daxiangme/form-vue vue element-plus
 ```
