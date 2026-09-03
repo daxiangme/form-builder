@@ -1,4 +1,5 @@
 import { evaluateDesignerCondition, evaluateDesignerExpression } from './expression'
+import { DESIGNER_WRITE_EVENT_ACTIONS, isDesignerRuntimeWriteBlocked } from './field-access'
 import type {
   DesignerDataSourceDefinition,
   DesignerDocument,
@@ -8,6 +9,7 @@ import type {
   DesignerExpression,
   DesignerExpressionRuntimeContext,
   DesignerRuntimeAdapters,
+  DesignerRuntimeMode,
   DesignerRuntimeValueStore,
 } from './types'
 
@@ -22,6 +24,7 @@ export interface DesignerEventRuntimeHost {
   currentRow?: Record<string, unknown>
   expressionContext: DesignerExpressionRuntimeContext['context']
   adapters?: DesignerRuntimeAdapters
+  runtimeMode?: DesignerRuntimeMode
   validate?: () => Promise<boolean>
   submit?: () => Promise<void>
   reset?: () => void
@@ -121,6 +124,12 @@ async function executeAction(
   host: DesignerEventRuntimeHost,
   runtime: DesignerExpressionRuntimeContext,
 ): Promise<void> {
+  if (
+    isDesignerRuntimeWriteBlocked(host.runtimeMode) &&
+    DESIGNER_WRITE_EVENT_ACTIONS.has(step.actionType)
+  ) {
+    throw new Error('只读或详情模式不允许执行写动作')
+  }
   const configuration = step.configuration
   if (step.actionType === 'SET_FIELD') {
     const fieldId = requiredText(configuration.fieldId, '目标字段')

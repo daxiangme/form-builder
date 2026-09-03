@@ -27,6 +27,15 @@ export type DesignerComponentGroup =
 /** 设计器与静态运行预览共用的模式。 */
 export type DesignerRuntimeMode = 'DESIGN' | 'CREATE' | 'EDIT' | 'READ_ONLY' | 'DETAIL'
 
+/** 设计文档字段的稳定身份。 */
+export type DesignerFieldId = string
+
+/** 服务端下发的字段访问级别。 */
+export type FormFieldAccessLevel = 'HIDDEN' | 'READ_ONLY' | 'EDITABLE' | 'REQUIRED'
+
+/** 以字段 ID 为键的运行权限投影。 */
+export type FormFieldAccessMap = Record<DesignerFieldId, FormFieldAccessLevel>
+
 /** 设计器当前设备。移动端只复用同一份 Schema。 */
 export type DesignerDevice = 'desktop' | 'mobile'
 
@@ -851,6 +860,113 @@ export interface FormLocationAdapter {
   }) => Promise<{ longitude: number; latitude: number; address?: string }>
 }
 
+/** 动态选项查询与已选值回显端口。 */
+export interface FormDynamicOptionAdapter {
+  query: (request: {
+    fieldId: string
+    fieldCode: string
+    keyword?: string
+    parentValues?: Record<string, unknown>
+    pageNo: number
+    pageSize?: number
+    resolveValues?: Array<string | number | boolean>
+    context: FormRuntimeAdapterContext
+  }) => Promise<{ items: DesignerOption[]; totalCount: number }>
+}
+
+/** 日期范围计算端口。 */
+export interface FormDateRangeAdapter {
+  calculate: (request: {
+    fieldId: string
+    fieldCode: string
+    startValue: string
+    endValue: string
+    context: FormRuntimeAdapterContext
+  }) => Promise<Record<string, unknown>>
+}
+
+/** 验证码或挑战签发端口。 */
+export interface FormChallengeAdapter {
+  issue: (request: {
+    fieldId?: string
+    fieldCode?: string
+    context: FormRuntimeAdapterContext
+  }) => Promise<{ challengeId: string; expiresAt?: string }>
+}
+
+/** 个人签名查询和复用端口。 */
+export interface FormPersonalSignatureAdapter {
+  queryReusable?: (request: {
+    context: FormRuntimeAdapterContext
+  }) => Promise<Array<{ signatureId: string; name?: string; previewUrl?: string }>>
+  reuse: (request: {
+    fieldId: string
+    fieldCode: string
+    signatureId?: string
+    context: FormRuntimeAdapterContext
+  }) => Promise<FormAssetReference>
+}
+
+/** 地区及字典级联数据端口。 */
+export interface FormRegionCascadeAdapter {
+  loadTree?: (request: {
+    maximumLevel?: number
+    context: FormRuntimeAdapterContext
+  }) => Promise<{ items: DesignerOption[]; datasetVersion?: string }>
+  queryChildren?: (request: {
+    parentCode?: string
+    context: FormRuntimeAdapterContext
+  }) => Promise<DesignerOption[]>
+}
+
+/** 设计资源目录中的稳定引用项。 */
+export interface FormDesignerReferenceItem {
+  code: string
+  name: string
+  description?: string
+  enabled?: boolean
+}
+
+/** 目录对内置组件可用性的受控覆盖。 */
+export interface FormDesignerComponentCatalogItem {
+  componentType: string
+  availability: DesignerComponentAvailability
+  unavailableReason?: string
+}
+
+/** 宿主向设计器声明的能力开关。 */
+export interface FormDesignerHostCapabilities {
+  upload?: boolean
+  ocr?: boolean
+  scan?: boolean
+  location?: boolean
+  remoteValidation?: boolean
+  dataSource?: boolean
+  directory?: boolean
+  dynamicOptions?: boolean
+  dateRange?: boolean
+  challenge?: boolean
+  personalSignature?: boolean
+  regionCascade?: boolean
+}
+
+/**
+ * 设计器纯数据目录快照。
+ *
+ * 只控制内置能力是否可选，不允许注入任意组件、任意 Element Plus Props、CSS、URL 或脚本。
+ */
+export interface FormDesignerCatalogs {
+  components?: FormDesignerComponentCatalogItem[]
+  dictionaries?: FormDesignerReferenceItem[]
+  optionSources?: FormDesignerReferenceItem[]
+  serialNumberRules?: FormDesignerReferenceItem[]
+  layoutTemplates?: FormDesignerReferenceItem[]
+  resources?: FormDesignerReferenceItem[]
+  hostActions?: FormDesignerReferenceItem[]
+  printTemplates?: FormDesignerReferenceItem[]
+  capabilities?: FormDesignerHostCapabilities
+}
+
 /** 联动覆盖已有字段值前由 Host 提供的受控确认 Adapter。 */
 export interface DesignerLinkageConfirmationAdapter {
   confirmOverwrite: (request: {
@@ -873,6 +989,11 @@ export interface DesignerRuntimeAdapters {
   ocr?: FormOcrAdapter
   scan?: FormScanAdapter
   location?: FormLocationAdapter
+  dynamicOption?: FormDynamicOptionAdapter
+  dateRange?: FormDateRangeAdapter
+  challenge?: FormChallengeAdapter
+  personalSignature?: FormPersonalSignatureAdapter
+  region?: FormRegionCascadeAdapter
 }
 
 /** 对外公开的运行 Adapter 集合别名。 */
