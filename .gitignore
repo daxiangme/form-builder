@@ -4,4 +4,6 @@ dist/
 .cache/
 *.tgz
 .DS_Store
-
+/docs/drafts/
+/docs/tmp/
+/docs/design/
