@@ -19,7 +19,7 @@
           :class="[
             `is-${device}`,
             `is-align-${document.appearance.labelAlign.toLowerCase()}`,
-            designerControlRadiusClass(document.appearance.controlRadius),
+            controlRadiusBind.class,
             {
               'is-overlay-module': Boolean(activeModule),
               'is-adaptive-viewport': !viewportWidth,
@@ -46,6 +46,9 @@
                 :animation="120"
                 :disabled="device === 'mobile'"
                 :on-move="canSortMove"
+                :empty-insert-threshold="sortableEmptyInsertThreshold"
+                invert-swap
+                :swap-threshold="sortableSwapThreshold"
                 draggable=".designer-canvas-node"
                 handle=".designer-node-drag-handle"
                 ghost-class="designer-canvas-node--ghost"
@@ -133,7 +136,7 @@ import type { CSSProperties } from 'vue'
 import { VueDraggable, type SortableEvent } from 'vue-draggable-plus'
 import DxSvgIcon from '../infrastructure/FormIcon.vue'
 import { projectDesignerCanvas } from '@daxiangme/form-core'
-import { designerControlRadiusClass } from '@daxiangme/form-core'
+import { designerControlRadiusBind } from '../designer-radius-style'
 import { designerNodeDropRejection } from '@daxiangme/form-core'
 import type {
   DesignerCanvasCell,
@@ -150,6 +153,12 @@ import DesignerCanvasNode from './DesignerCanvasNode.vue'
 import DesignerDropZone from './DesignerDropZone.vue'
 import DesignerGridDropCell from './DesignerGridDropCell.vue'
 import DesignerOverlayCanvasFrame from './DesignerOverlayCanvasFrame.vue'
+import {
+  DESIGNER_CANVAS_EMPTY_INSERT_THRESHOLD,
+  DESIGNER_CANVAS_NESTED_ESCAPE_PX,
+  DESIGNER_CANVAS_SORTABLE_GROUP,
+  DESIGNER_CANVAS_SWAP_THRESHOLD,
+} from './designer-canvas-sortable'
 
 defineOptions({ name: 'DesignerCanvas' })
 
@@ -179,7 +188,9 @@ const stageRef = ref<HTMLElement>()
 const surfaceRef = ref<{ $el: HTMLElement }>()
 const stageSize = reactive({ width: 0, height: 0 })
 const naturalHeight = ref(0)
-const sortableGroup = { name: 'daxiang-form-designer-canvas', pull: true, put: true }
+const sortableGroup = DESIGNER_CANVAS_SORTABLE_GROUP
+const sortableEmptyInsertThreshold = DESIGNER_CANVAS_EMPTY_INSERT_THRESHOLD
+const sortableSwapThreshold = DESIGNER_CANVAS_SWAP_THRESHOLD
 const paletteDragActive = computed(
   () => dragSession.value.active && dragSession.value.source === 'PALETTE',
 )
@@ -206,6 +217,9 @@ const naturalWidth = computed(() => {
   return Math.max(320, stageSize.width - 8)
 })
 const scale = computed(() => props.zoom / 100)
+const controlRadiusBind = computed(() =>
+  designerControlRadiusBind(props.document.appearance.controlRadius),
+)
 const minimumSceneHeight = computed(() => Math.max(480, stageSize.height - 16))
 const sceneStyle = computed(() => ({
   width: `${naturalWidth.value * scale.value}px`,
@@ -218,6 +232,7 @@ const surfaceStyle = computed(() => ({
   '--designer-grid-gutter': `${props.document.appearance.gridGutter}px`,
   '--designer-row-gap': `${props.document.appearance.rowGap}px`,
   '--designer-canvas-min-height': `${minimumSceneHeight.value / Math.max(scale.value, 0.5)}px`,
+  ...controlRadiusBind.value.style,
 }))
 const dragCandidateStyle = computed<CSSProperties>(() => ({
   left: `${dragCandidate.left}px`,
@@ -240,6 +255,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   stageResizeObserver?.disconnect()
   surfaceResizeObserver?.disconnect()
+  stopCanvasPointerTracking()
 })
 
 watch(
@@ -285,8 +301,36 @@ function updateRootNodes(nodes: DesignerLayoutNode[]): void {
   emit('reorder', null, 'root', nodes)
 }
 
+const canvasPointer = { x: 0, y: 0 }
+
+function trackCanvasPointer(event: Event): void {
+  const pointer = pointerFromEvent(event)
+  if (!pointer) return
+  canvasPointer.x = pointer.x
+  canvasPointer.y = pointer.y
+}
+
+function startCanvasPointerTracking(event?: SortableEvent): void {
+  const native = (event as (SortableEvent & { originalEvent?: Event }) | undefined)?.originalEvent
+  const pointer = pointerFromEvent(native)
+  if (pointer) {
+    canvasPointer.x = pointer.x
+    canvasPointer.y = pointer.y
+  }
+  window.addEventListener('pointermove', trackCanvasPointer)
+  window.addEventListener('dragover', trackCanvasPointer)
+}
+
+function stopCanvasPointerTracking(): void {
+  window.removeEventListener('pointermove', trackCanvasPointer)
+  window.removeEventListener('dragover', trackCanvasPointer)
+  canvasPointer.x = 0
+  canvasPointer.y = 0
+}
+
 function handleNodeDragStart(event?: SortableEvent): void {
   const sourceNodeId = event?.item.dataset.designerNodeId ?? ''
+  startCanvasPointerTracking(event)
   dragSession.value = {
     active: true,
     source: 'CANVAS',
@@ -298,6 +342,7 @@ function handleNodeDragStart(event?: SortableEvent): void {
 }
 
 function handleNodeDragEnd(): void {
+  stopCanvasPointerTracking()
   clearDragCandidate()
   dragSession.value = createEmptyDragSession()
   emit('drag-end')
@@ -328,10 +373,20 @@ function handleStageDragOver(event: DragEvent): void {
 }
 
 function handleStageDragLeave(event: DragEvent): void {
-  const current = event.currentTarget as HTMLElement | null
-  const related = event.relatedTarget as Node | null
-  if (!current || (related && current.contains(related))) return
+  if (isPointerInsideElement(event, event.currentTarget as HTMLElement | null)) return
   endPaletteDrag()
+}
+
+/** 用当前指针坐标判断是否仍在画布内，避免 `relatedTarget` 为空时误结束面板拖放。 */
+function isPointerInsideElement(event: DragEvent, element: HTMLElement | null): boolean {
+  if (!element) return false
+  const bounds = element.getBoundingClientRect()
+  return (
+    event.clientX >= bounds.left &&
+    event.clientX <= bounds.right &&
+    event.clientY >= bounds.top &&
+    event.clientY <= bounds.bottom
+  )
 }
 
 function endPaletteDrag(): void {
@@ -354,7 +409,11 @@ function forwardReorder(
   emit('reorder', containerId, slotCode, nodes)
 }
 
-function canSortMove(event: DesignerSortableMoveEvent): boolean {
+function canSortMove(event: DesignerSortableMoveEvent, originalEvent?: Event): boolean {
+  if (shouldReleaseNestedList(event, originalEvent)) {
+    clearDragCandidate()
+    return false
+  }
   const nodeId = event.dragged.dataset.designerNodeId ?? ''
   const targetContainerId = event.to.dataset.containerId || null
   const targetIndex = resolveTargetIndex(event)
@@ -378,6 +437,40 @@ function canSortMove(event: DesignerSortableMoveEvent): boolean {
   }
   updateDragCandidate(event, accepted)
   return accepted
+}
+
+/** 指针离开嵌套插槽后让出落点，使节点可以拖回父级列表。 */
+function shouldReleaseNestedList(event: DesignerSortableMoveEvent, originalEvent?: Event): boolean {
+  if (!event.to.dataset.containerId) return false
+  const pointer = resolveCanvasPointer(originalEvent)
+  if (!pointer) return false
+  const bounds = event.to.getBoundingClientRect()
+  const inset = DESIGNER_CANVAS_NESTED_ESCAPE_PX
+  const inside =
+    pointer.x >= bounds.left &&
+    pointer.x <= bounds.right &&
+    pointer.y >= bounds.top + inset &&
+    pointer.y <= bounds.bottom - inset
+  return !inside
+}
+
+function resolveCanvasPointer(event?: Event): { x: number; y: number } | undefined {
+  const fromEvent = pointerFromEvent(event)
+  if (fromEvent) return fromEvent
+  if (canvasPointer.x === 0 && canvasPointer.y === 0) return undefined
+  return canvasPointer
+}
+
+function pointerFromEvent(event?: Event): { x: number; y: number } | undefined {
+  if (!event) return undefined
+  if (isClientPointEvent(event)) return { x: event.clientX, y: event.clientY }
+  const touchEvent = event as TouchEvent
+  const touch = touchEvent.touches?.[0] ?? touchEvent.changedTouches?.[0]
+  return touch ? { x: touch.clientX, y: touch.clientY } : undefined
+}
+
+function isClientPointEvent(event: Event): event is MouseEvent {
+  return 'clientX' in event && 'clientY' in event
 }
 
 function resolveTargetIndex(event: DesignerSortableMoveEvent): number {
@@ -612,7 +705,7 @@ defineExpose({ fitToWidth, captureViewport, restoreViewport })
 .designer-canvas__node-list {
   position: relative;
   display: grid;
-  min-height: 0;
+  min-height: 88px;
   flex: 0 0 auto;
   align-content: start;
   grid-template-columns: repeat(24, minmax(0, 1fr));
@@ -621,8 +714,8 @@ defineExpose({ fitToWidth, captureViewport, restoreViewport })
 }
 
 .designer-canvas__tail-drop-zone {
-  min-height: 120px;
-  flex: 1 1 120px;
+  min-height: 72px;
+  flex: 1 1 auto;
   margin-top: var(--designer-row-gap);
 }
 

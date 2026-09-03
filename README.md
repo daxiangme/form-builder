@@ -10,7 +10,7 @@ Form Builder 是面向 Vue 3 与 Element Plus 的开源可视化低代码表单�
 - 统一的 `DesignerDocument 1.0` 文档、严格编解码与诊断。
 - 主表单、弹窗、抽屉、响应式栅格、行子表和块子表。
 - 状态条件、公式计算、字段联动、验证规则与声明式事件流。
-- Element Plus 控件、浅色/深色主题和受控圆角样式。
+- Element Plus 控件、浅色/深色主题和受控圆角样式。新建文档默认顶部左对齐；`THEME` 跟随宿主 `--el-border-radius-base`，自定义圆角为 0～32 的 4 的倍数 px，旧档位 `NONE` / `SMALL` / `BASE` / `LARGE` 解码为 0 / 4 / 8 / 12。
 - 文件、数据源、远程验证、OCR、扫码、定位、导航、动态选项、日期范围、验证码、个人签名、地区级联与宿主动作 Adapter 端口。
 - 运行模式 `CREATE` / `EDIT` / `READ_ONLY` / `DETAIL`，以及按字段 ID 生效的 `fieldAccess`。
 - 现代 ESM、完整 TypeScript 类型声明和独立 CSS 产物。
@@ -31,7 +31,14 @@ pnpm add @daxiangme/form-vue
 pnpm add @daxiangme/form-vue vue element-plus
 ```
 
-按以下顺序引入样式：
+按需宿主（`unplugin-vue-components` 等）只需引入包自身样式。入口会副作用导入所用 Element Plus 组件的 `style/css`，宿主已有的 `--el-*` 变量和全局 `.el-*` 补丁会作用在设计器上，不必全量 `element-plus/dist/index.css`，也不必 `app.use(ElementPlus)`：
+
+```ts
+import '@daxiangme/form-vue/style.css'
+import { FormDesigner, FormRenderer } from '@daxiangme/form-vue'
+```
+
+已经全量引入 Element Plus 样式的工程仍然兼容，可继续：
 
 ```ts
 import 'element-plus/dist/index.css'
@@ -43,6 +50,17 @@ import '@daxiangme/form-vue/style.css'
 
 ```ts
 import { createApp } from 'vue'
+import { FormDesigner, FormRenderer } from '@daxiangme/form-vue'
+
+import App from './App.vue'
+
+createApp(App).mount('#app')
+```
+
+已经全量 `app.use(ElementPlus)` 的工程可以继续全局安装，或使用可选插件 `DaxiangFormVue` 只注册两个公共组件：
+
+```ts
+import { createApp } from 'vue'
 import ElementPlus from 'element-plus'
 import { DaxiangFormVue } from '@daxiangme/form-vue'
 
@@ -50,8 +68,6 @@ import App from './App.vue'
 
 createApp(App).use(ElementPlus).use(DaxiangFormVue).mount('#app')
 ```
-
-也可以跳过全局注册，直接按需导入 `FormDesigner` 和 `FormRenderer`。
 
 ## 设计表单
 

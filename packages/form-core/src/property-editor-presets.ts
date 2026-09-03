@@ -1,4 +1,5 @@
 import type { DesignerPropertyOption } from './types'
+import { DESIGNER_RADIUS_PX_PRESETS } from './radius'
 
 /** 属性面板共用的标准间距预设，单位为 px。 */
 export const DESIGNER_SPACING_PRESETS = numberOptions([0, 4, 8, 12, 16, 24, 32, 48], (value) =>
@@ -21,6 +22,21 @@ export const DESIGNER_PAGE_SIZE_PRESETS = numberOptions(
 export const DESIGNER_INITIAL_COUNT_PRESETS = numberOptions([0, 1, 2, 3, 5, 10, 20], (value) =>
   value === 0 ? '不预置' : `${value} 条`,
 )
+
+/**
+ * 生成圆角编辑器选项。
+ *
+ * 预设为跟随系统与常用 4 的倍数；手输其它合法像素由检查器 allow-create 补入。
+ */
+export function designerRadiusEditorOptions(includeInherit: boolean): DesignerPropertyOption[] {
+  return [
+    ...(includeInherit ? [{ label: '跟随表单', value: 'INHERIT' as const }] : []),
+    { label: '跟随系统', value: 'THEME' },
+    ...numberOptions([...DESIGNER_RADIUS_PX_PRESETS], (value) =>
+      value === 0 ? '直角 · 0 px' : `${value} px`,
+    ),
+  ]
+}
 
 /** 文本和意见控件共用的长度预设。 */
 export const DESIGNER_LENGTH_PRESETS = numberOptions(

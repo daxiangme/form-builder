@@ -23,6 +23,22 @@
   color-scheme: light;
 }
 
+.daxiang-form-control-radius-custom .el-form-item,
+.daxiang-form-control-radius-custom .el-button,
+.daxiang-form-control-radius-custom .el-input,
+.daxiang-form-control-radius-custom .el-select,
+.daxiang-form-control-radius-custom .el-textarea {
+  --el-border-radius-base: var(--daxiang-form-control-radius);
+  --el-border-radius-small: var(--daxiang-form-control-radius);
+}
+
+.daxiang-form-dialog-radius-custom.el-dialog,
+.daxiang-form-dialog-radius-custom {
+  --el-border-radius-base: var(--daxiang-form-dialog-radius);
+
+  border-radius: var(--daxiang-form-dialog-radius);
+}
+
 html.dark .daxiang-form,
 html.dark .daxiang-form-modal,
 html.dark .daxiang-form-drawer {

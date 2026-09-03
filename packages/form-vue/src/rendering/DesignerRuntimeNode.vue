@@ -45,7 +45,11 @@
     :span="grid.span"
     :offset="grid.offset"
   >
-    <div class="designer-runtime-node__surface-host" :class="containerAppearanceClasses">
+    <div
+      class="designer-runtime-node__surface-host"
+      :class="containerAppearanceClasses"
+      :style="containerRadiusStyle"
+    >
       <component
         :is="`h${headingLevel}`"
         v-if="node.componentType === 'title'"
@@ -310,6 +314,7 @@ import { computed, ref, watchEffect } from 'vue'
 import { findDesignerComponent } from '@daxiangme/form-core'
 import {
   designerContainerAppearanceClasses,
+  designerContainerRadiusStyle,
   resolveDesignerContainerAppearance,
 } from '@daxiangme/form-core'
 import { createDesignerFieldFeedbackKey } from '@daxiangme/form-core'
@@ -458,6 +463,11 @@ const containerAppearanceClasses = computed(() =>
       )
     : [],
 )
+const containerRadiusStyle = computed(() => {
+  if (!container.value) return undefined
+  const resolved = resolveDesignerContainerAppearance(props.appearance, container.value)
+  return resolved ? designerContainerRadiusStyle(resolved.radius) : undefined
+})
 const headingLevel = computed(() => Math.max(1, Math.min(6, numberConfiguration('level') || 3)))
 const headingStyle = computed(() => ({
   color: textConfiguration('fontColor') || undefined,

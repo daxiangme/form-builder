@@ -20,7 +20,14 @@ pnpm add @daxiangme/form-vue
 pnpm add @daxiangme/form-vue vue element-plus
 ```
 
-按以下顺序引入样式：
+按需宿主（`unplugin-vue-components` 等）只需引入包自身样式。入口会副作用导入所用 Element Plus 组件的 `style/css`，宿主已有的 `--el-*` 变量和全局 `.el-*` 补丁会作用在设计器上，**不必**全量 `element-plus/dist/index.css`，也**不必** `app.use(ElementPlus)`：
+
+```ts
+import '@daxiangme/form-vue/style.css'
+import { FormDesigner, FormRenderer } from '@daxiangme/form-vue'
+```
+
+已经全量引入 Element Plus 样式的工程仍然兼容，可继续：
 
 ```ts
 import 'element-plus/dist/index.css'
@@ -30,7 +37,7 @@ import '@daxiangme/form-vue/style.css'
 
 ## 注册组件
 
-库构建已把 Element Plus 控件编译为 `import { ElButton } from 'element-plus'`。按需宿主（`unplugin-vue-components` 等）**不必** `app.use(ElementPlus)`；引入 Vue 3、Element Plus peer 与样式后直接导入两个公共组件即可：
+库构建会为模板用到的 Element Plus 控件注入对应 `style/css` 副作用导入。按需宿主直接导入两个公共组件即可：
 
 ```ts
 import { createApp } from 'vue'
@@ -125,6 +132,8 @@ function handleSubmit(projection: DesignerSubmissionProjection) {
 ## 运行效果与主题
 
 弹窗和抽屉在运行态使用真实 Element Plus 外壳。组件默认消费 Element Plus CSS Variables，深色模式直接跟随宿主的 `html.dark`。
+
+新建文档默认标签位于顶部且左对齐。圆角取值是 `THEME` 或 0～32 的 4 的倍数像素：`THEME` 跟随宿主 `--el-border-radius-base`；旧档位 `NONE` / `SMALL` / `BASE` / `LARGE` 解码为 0 / 4 / 8 / 12。自定义像素会写入 `--daxiang-form-container-radius` 等变量，而不是空的档位 class。
 
 ![表单运行预览](https://raw.githubusercontent.com/daxiangme/form-builder/v0.1.1/docs/assets/screenshots/runtime-preview.png)
 

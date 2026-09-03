@@ -10,7 +10,7 @@ export default defineConfig({
     Components({
       dts: false,
       directives: true,
-      resolvers: [ElementPlusResolver({ importStyle: false })],
+      resolvers: [ElementPlusResolver({ importStyle: 'css' })],
     }),
     dts({ rollupTypes: true }),
   ],

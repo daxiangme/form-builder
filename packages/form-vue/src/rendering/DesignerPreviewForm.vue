@@ -56,7 +56,8 @@
 
       <ElForm
         class="designer-preview-form__form"
-        :class="designerControlRadiusClass(document.appearance.controlRadius)"
+        :class="controlRadiusBind.class"
+        :style="controlRadiusBind.style"
         :label-position="formLabelPosition"
         :label-width="document.appearance.labelWidth"
         :label-suffix="document.appearance.labelSuffix"
@@ -109,7 +110,7 @@
       :title="localizedOverlayName"
       :width="activeOverlay?.width ?? 720"
       :max-height="resolveDesignerOverlayMaxHeight(activeOverlay?.maxHeightPreset ?? 'VIEWPORT')"
-      :dialog-class="activeOverlay ? designerDialogRadiusClass(activeOverlay.radius) : ''"
+      :radius="activeOverlay?.radius"
       confirm-text="确认"
       @update:model-value="handleDialogVisibility"
       @confirm="confirmActiveModule"
@@ -117,7 +118,8 @@
     >
       <div v-if="activeOverlay && overlayValueStore" class="designer-preview-form__overlay-content">
         <ElForm
-          :class="designerControlRadiusClass(document.appearance.controlRadius)"
+          :class="controlRadiusBind.class"
+          :style="controlRadiusBind.style"
           :label-position="formLabelPosition"
           :label-width="document.appearance.labelWidth"
           :label-suffix="document.appearance.labelSuffix"
@@ -160,7 +162,8 @@
     >
       <div v-if="activeOverlay && overlayValueStore" class="designer-preview-form__overlay-content">
         <ElForm
-          :class="designerControlRadiusClass(document.appearance.controlRadius)"
+          :class="controlRadiusBind.class"
+          :style="controlRadiusBind.style"
           :label-position="formLabelPosition"
           :label-width="document.appearance.labelWidth"
           :label-suffix="document.appearance.labelSuffix"
@@ -206,7 +209,7 @@ import { computed, ref, reactive, watch, nextTick } from 'vue'
 import type { CSSProperties } from 'vue'
 import DModal from '../infrastructure/FormModalShell.vue'
 import DxSvgIcon from '../infrastructure/FormIcon.vue'
-import { designerControlRadiusClass, designerDialogRadiusClass } from '@daxiangme/form-core'
+import { designerControlRadiusBind } from '../designer-radius-style'
 import { executeDesignerEventFlow } from '@daxiangme/form-core'
 import { resolveDesignerOverlayMaxHeight } from '@daxiangme/form-core'
 import {
@@ -361,6 +364,9 @@ const elementSize = computed(() => {
   const size = props.document.appearance.size
   return size === 'SMALL' ? 'small' : size === 'LARGE' ? 'large' : 'default'
 })
+const controlRadiusBind = computed(() =>
+  designerControlRadiusBind(props.document.appearance.controlRadius),
+)
 const formLabelPosition = computed(
   () => props.document.appearance.labelPosition.toLowerCase() as 'top' | 'left' | 'right',
 )

@@ -19,12 +19,20 @@
         <ElOption label="桌面" value="desktop" />
         <ElOption label="移动" value="mobile" />
       </ElSelect>
-      <ElSelect v-model="controlRadius" aria-label="全局圆角">
-        <ElOption label="跟随主题" value="THEME" />
-        <ElOption label="无圆角" value="NONE" />
-        <ElOption label="小圆角" value="SMALL" />
-        <ElOption label="标准圆角" value="BASE" />
-        <ElOption label="大圆角" value="LARGE" />
+      <ElSelect
+        :model-value="controlRadius"
+        filterable
+        allow-create
+        default-first-option
+        aria-label="全局圆角"
+        @update:model-value="setControlRadius"
+      >
+        <ElOption
+          v-for="option in radiusOptions"
+          :key="String(option.value)"
+          :label="option.label"
+          :value="option.value"
+        />
       </ElSelect>
       <ElSwitch v-model="dark" active-text="深色" inactive-text="浅色" />
     </header>
@@ -65,6 +73,10 @@ import {
   createDemoDesignerDocument,
   createDesignerOverlayModule,
   createNodeFromComponent,
+  designerRadiusEditorOptions,
+  designerRadiusValueLabel,
+  includeDesignerCurrentOption,
+  parseDesignerRadiusInput,
   type DesignerDevice,
   type DesignerDocument,
   type DesignerRuntimeMode,
@@ -91,21 +103,29 @@ const adapterContext = computed(() => ({
   applicationCode: 'playground',
   resourceCode: 'sample-form',
 }))
-const controlRadius = computed({
-  get: () => document.value.appearance.controlRadius,
-  set: (value: DesignerDocument['appearance']['controlRadius']) => {
-    document.value = {
-      ...document.value,
-      appearance: { ...document.value.appearance, controlRadius: value },
-    }
-  },
-})
+const radiusOptions = computed(() =>
+  includeDesignerCurrentOption(
+    designerRadiusEditorOptions(false),
+    document.value.appearance.controlRadius,
+    (value) => (typeof value === 'number' ? designerRadiusValueLabel(value) : String(value)),
+  ),
+)
+const controlRadius = computed(() => document.value.appearance.controlRadius)
 
 watch(dark, (enabled) => globalThis.document.documentElement.classList.toggle('dark', enabled), {
   immediate: true,
 })
 
 onBeforeUnmount(() => localAdapter.dispose())
+
+function setControlRadius(value: unknown): void {
+  const next = parseDesignerRadiusInput(value)
+  if (next === undefined) return
+  document.value = {
+    ...document.value,
+    appearance: { ...document.value.appearance, controlRadius: next },
+  }
+}
 
 function showMessage(message: string): void {
   ElMessage.success(message)

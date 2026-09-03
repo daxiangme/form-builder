@@ -328,6 +328,7 @@ import {
   findDesignerNode,
   generateDesignerDataModelLayout,
   insertDesignerNode,
+  isDesignerRadiusValue,
   moveDesignerNode,
   removeDesignerNode,
   restoreDesignerFieldNode,
@@ -912,6 +913,8 @@ function applyBatchDefaults(values: Record<string, unknown>): void {
 }
 
 function updateAppearance(key: keyof DesignerDocument['appearance'], value: unknown): void {
+  if ((key === 'controlRadius' || key === 'containerRadius') && !isDesignerRadiusValue(value))
+    return
   engine.execute((document) => {
     const appearance = { ...document.appearance, [key]: value }
     // 顶部标签从左侧开始阅读更符合纵向表单习惯；只在切换位置时应用默认值，后续仍允许手动调整。
@@ -1216,10 +1219,7 @@ function normalizeModulePatch(
   ) {
     normalized.dataContext = patch.dataContext
   }
-  if (
-    patch.radius !== undefined &&
-    ['THEME', 'NONE', 'SMALL', 'BASE', 'LARGE'].includes(patch.radius)
-  ) {
+  if (patch.radius !== undefined && isDesignerRadiusValue(patch.radius)) {
     normalized.radius = patch.radius
   }
   if (

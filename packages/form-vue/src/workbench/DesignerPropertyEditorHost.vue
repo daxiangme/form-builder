@@ -43,6 +43,22 @@
       @update:model-value="emitValue(Boolean($event))"
     />
     <ElSelect
+      v-else-if="editor.type === 'RADIUS'"
+      :model-value="primitiveValue"
+      filterable
+      allow-create
+      default-first-option
+      placeholder="跟随系统或 4 的倍数 px"
+      @update:model-value="emitRadiusValue"
+    >
+      <ElOption
+        v-for="option in radiusOptions"
+        :key="String(option.value)"
+        :label="option.label"
+        :value="option.value"
+      />
+    </ElSelect>
+    <ElSelect
       v-else-if="editor.type === 'SELECT' || editor.type === 'PRESET_NUMBER'"
       :model-value="primitiveValue"
       @update:model-value="emitValue"
@@ -147,8 +163,11 @@ import {
   DESIGNER_MOBILE_SPAN_PRESETS,
   DESIGNER_PC_SPAN_PRESETS,
   designerDateFormatOptions,
+  designerRadiusEditorOptions,
+  designerRadiusValueLabel,
   includeDesignerCurrentOption,
   numberOptions,
+  parseDesignerRadiusInput,
 } from '@daxiangme/form-core'
 import DesignerOptionsEditor from './DesignerOptionsEditor.vue'
 
@@ -194,6 +213,13 @@ const controlledOptions = computed<DesignerPropertyOption[]>(() => {
       currentEditor.device === 'desktop' ? DESIGNER_PC_SPAN_PRESETS : DESIGNER_MOBILE_SPAN_PRESETS
     return includeDesignerCurrentOption(presets, props.modelValue, (value) => `${value}/24`)
   }
+  if (currentEditor.type === 'RADIUS') {
+    return includeDesignerCurrentOption(
+      designerRadiusEditorOptions(Boolean(currentEditor.includeInherit)),
+      props.modelValue,
+      (value) => (typeof value === 'number' ? designerRadiusValueLabel(value) : String(value)),
+    )
+  }
   if (currentEditor.type === 'GRID_OFFSET') {
     const span = finiteInteger(props.configuration[currentEditor.spanKey], 24)
     const maximum = Math.max(0, 24 - Math.max(1, Math.min(24, span)))
@@ -221,6 +247,9 @@ const controlledOptions = computed<DesignerPropertyOption[]>(() => {
   }
   return []
 })
+const radiusOptions = computed(() =>
+  editor.value.type === 'RADIUS' ? controlledOptions.value : [],
+)
 const selectedFileExtensions = computed(() => parseFileExtensions(stringValue.value))
 const fileTypeGroups = computed(() =>
   DESIGNER_FILE_TYPE_OPTIONS.filter((item) => item.group).map((item) => ({
@@ -268,6 +297,19 @@ function emitValue(value: unknown): void {
 
 function emitNumberValue(value: number | undefined): void {
   emitValue(value === undefined && props.modelValue === null ? null : value)
+}
+
+/** 仅提交跟随表单、跟随系统或合法 4 的倍数像素；手输 10 等非法值不落盘。 */
+function emitRadiusValue(value: unknown): void {
+  const currentEditor = editor.value
+  if (currentEditor.type !== 'RADIUS') return
+  if (currentEditor.includeInherit && value === 'INHERIT') {
+    emitValue('INHERIT')
+    return
+  }
+  const next = parseDesignerRadiusInput(value)
+  if (next === undefined) return
+  emitValue(next)
 }
 
 function updateUrlDraft(value: string): void {

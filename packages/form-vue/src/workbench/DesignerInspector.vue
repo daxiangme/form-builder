@@ -394,18 +394,14 @@
               <small>设计外壳优先占满可用空间，达到此上限后居中展示；运行预览沿用该配置值。</small>
             </ElFormItem>
             <ElFormItem v-if="activeModule.kind === 'DIALOG'" label="弹窗圆角">
-              <ElSelect
+              <DesignerPropertyEditorHost
+                :definition="moduleRadiusDefinition"
                 :model-value="activeModule.radius ?? 'THEME'"
                 @update:model-value="updateModuleRadius(activeModule.code, $event)"
+              />
+              <small
+                >跟随系统时消费宿主 --el-border-radius-base；自定义值须为 0～32 的 4 的倍数。</small
               >
-                <ElOption
-                  v-for="option in radiusOptions(false)"
-                  :key="String(option.value)"
-                  :label="option.label"
-                  :value="option.value"
-                />
-              </ElSelect>
-              <small>默认跟随系统全局圆角，也可选择直角、小、标准或大圆角。</small>
             </ElFormItem>
             <ElFormItem v-if="activeModule.kind === 'DIALOG'" label="运行最大高度">
               <ElSelect
@@ -464,9 +460,17 @@
               />
             </ElFormItem>
             <ElFormItem label="数据模型来源">
-              <ElTag effect="plain" :type="document.dataSchema.source ? 'success' : 'info'">
-                {{ dataModelSourceLabel }}
-              </ElTag>
+              <div class="designer-inspector__source-wrap">
+                <ElTooltip :content="dataModelSourceLabel" placement="top-start">
+                  <ElTag
+                    class="designer-inspector__source-tag"
+                    effect="plain"
+                    :type="document.dataSchema.source ? 'success' : 'info'"
+                  >
+                    {{ dataModelSourceLabel }}
+                  </ElTag>
+                </ElTooltip>
+              </div>
             </ElFormItem>
             <ElDivider content-position="left">标签</ElDivider>
             <ElFormItem label="默认位置">
@@ -574,9 +578,10 @@
             </ElFormItem>
             <div
               class="designer-inspector__appearance-preview"
-              :class="designerControlRadiusClass(document.appearance.controlRadius)"
+              :class="controlRadiusBind.class"
+              :style="controlRadiusBind.style"
             >
-              <div :class="formContainerAppearanceClasses">
+              <div :class="formContainerAppearanceClasses" :style="formContainerRadiusStyle">
                 <span>容器外观预览</span>
                 <ElInput model-value="字段控件" readonly />
               </div>
@@ -683,10 +688,13 @@ import { compatibleDesignerComponents, findDesignerComponent } from '@daxiangme/
 import {
   countDesignerSurfaceContainers,
   designerContainerAppearanceClasses,
-  designerControlRadiusClass,
+  designerContainerRadiusStyle,
+  designerRadiusValueLabel,
+  isDesignerRadiusValue,
   resolveDesignerContainerAppearance,
 } from '@daxiangme/form-core'
 import { DESIGNER_SPACING_PRESETS, numberOptions } from '@daxiangme/form-core'
+import { designerControlRadiusBind } from '../designer-radius-style'
 import type {
   DesignerComponentEvent,
   DesignerComponentRegistration,
@@ -700,7 +708,7 @@ import type {
   DesignerOverlayMaxHeightPreset,
   DesignerOverlayModule,
   DesignerPropertyDefinition,
-  DesignerRadiusPreset,
+  DesignerRadiusValue,
   DesignerRelationPatch,
   DesignerRootEntityPatch,
 } from '@daxiangme/form-core'
@@ -832,8 +840,7 @@ const appearanceDefinitions = {
     ],
   }),
   controlRadius: propertyDefinition('controlRadius', '控件圆角', {
-    type: 'SELECT',
-    options: radiusOptions(false),
+    type: 'RADIUS',
   }),
   containerStyle: propertyDefinition('containerStyle', '默认容器样式', {
     type: 'SEGMENTED',
@@ -844,10 +851,12 @@ const appearanceDefinitions = {
     ],
   }),
   containerRadius: propertyDefinition('containerRadius', '默认容器圆角', {
-    type: 'SELECT',
-    options: radiusOptions(false),
+    type: 'RADIUS',
   }),
 } satisfies Record<string, DesignerPropertyDefinition>
+const moduleRadiusDefinition = propertyDefinition('radius', '弹窗圆角', {
+  type: 'RADIUS',
+})
 const gridOffsetDefinition = propertyDefinition('offset', '偏移', {
   type: 'GRID_OFFSET',
   spanKey: 'span',
@@ -953,6 +962,12 @@ const formContainerAppearanceClasses = computed(() =>
     radiusSource: 'FORM',
   }),
 )
+const formContainerRadiusStyle = computed(() =>
+  designerContainerRadiusStyle(props.document.appearance.containerRadius),
+)
+const controlRadiusBind = computed(() =>
+  designerControlRadiusBind(props.document.appearance.controlRadius),
+)
 
 watch(
   () => [props.activeModule?.id, props.activeModule?.name, props.activeModule?.code] as const,
@@ -1026,10 +1041,10 @@ function updateModuleWidth(moduleCode: string, value: number | undefined): void 
   emit('update-module', moduleCode, { width: value })
 }
 
-/** 仅提交受控弹窗圆角档位，拒绝自由数值和未知枚举。 */
+/** 仅提交跟随系统或合法 4 的倍数像素，拒绝自由数值。 */
 function updateModuleRadius(moduleCode: string, value: unknown): void {
-  if (!['THEME', 'NONE', 'SMALL', 'BASE', 'LARGE'].includes(String(value))) return
-  emit('update-module', moduleCode, { radius: value as DesignerRadiusPreset })
+  if (!isDesignerRadiusValue(value)) return
+  emit('update-module', moduleCode, { radius: value })
 }
 
 /** 仅提交受控弹窗运行高度档位，设计画布不会消费该值。 */
@@ -1082,29 +1097,12 @@ function propertyDefinition(
   return { key, label, section: 'DISPLAY', editor }
 }
 
-function radiusOptions(includeInherit: boolean) {
-  return [
-    ...(includeInherit ? [{ label: '跟随表单', value: 'INHERIT' }] : []),
-    { label: '跟随系统', value: 'THEME' },
-    { label: '直角 · 0px', value: 'NONE' },
-    { label: '小 · 4px', value: 'SMALL' },
-    { label: '标准 · 8px', value: 'BASE' },
-    { label: '大 · 12px', value: 'LARGE' },
-  ]
-}
-
 function containerStyleLabel(style: Exclude<DesignerContainerStyleOverride, 'INHERIT'>): string {
   return { NONE: '无容器', BORDERED: '边框', SHADOW: '阴影', FILLED: '历史填充' }[style]
 }
 
-function radiusLabel(radius: DesignerRadiusPreset): string {
-  return {
-    THEME: '跟随系统',
-    NONE: '直角',
-    SMALL: '小圆角 4px',
-    BASE: '标准圆角 8px',
-    LARGE: '大圆角 12px',
-  }[radius]
+function radiusLabel(radius: DesignerRadiusValue): string {
+  return designerRadiusValueLabel(radius)
 }
 
 function normalizeKey(value: string): string {
@@ -1259,6 +1257,50 @@ async function jumpToSection(name: string): Promise<void> {
 
 .designer-inspector :deep(.el-form-item) {
   margin-bottom: var(--daxiang-form-space-3);
+}
+
+.designer-inspector :deep(.el-form-item__content) {
+  width: 100%;
+  min-width: 0;
+}
+
+.designer-inspector__source-wrap {
+  display: block;
+  width: 100%;
+  min-width: 0;
+}
+
+.designer-inspector__source-wrap :deep(.el-tooltip__trigger) {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.designer-inspector__source-tag {
+  display: flex;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  min-height: 24px;
+  align-items: flex-start;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+  line-height: 18px;
+  cursor: text;
+  user-select: text;
+}
+
+.designer-inspector__source-tag :deep(.el-tag__content) {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  overflow-wrap: inherit;
+  word-break: inherit;
+  white-space: inherit;
+  user-select: text;
 }
 
 .designer-inspector :deep(.el-collapse-item__header) {

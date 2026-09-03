@@ -1,3 +1,4 @@
+import './element-plus-runtime-styles'
 import type { App, Plugin } from 'vue'
 import FormDesigner from './FormDesigner.vue'
 import FormRenderer from './rendering/DesignerPreviewForm.vue'

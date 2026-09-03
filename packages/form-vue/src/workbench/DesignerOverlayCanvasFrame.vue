@@ -6,7 +6,6 @@
   >
     <article
       class="designer-overlay-canvas-frame__panel"
-      :class="module.kind === 'DIALOG' ? designerDialogRadiusClass(module.radius) : undefined"
       :style="panelStyle"
       @click.self="emit('select-frame')"
     >
@@ -32,7 +31,7 @@
 import { computed } from 'vue'
 import type { CSSProperties } from 'vue'
 import DxSvgIcon from '../infrastructure/FormIcon.vue'
-import { designerDialogRadiusClass } from '@daxiangme/form-core'
+import { designerRadiusCssValue } from '@daxiangme/form-core'
 import type { DesignerOverlayModule } from '@daxiangme/form-core'
 
 defineOptions({ name: 'DesignerOverlayCanvasFrame' })
@@ -49,6 +48,9 @@ const emit = defineEmits<{ 'select-frame': [] }>()
 const panelStyle = computed<CSSProperties>(() => ({
   width: '100%',
   maxWidth: `${props.module.width}px`,
+  ...(props.module.kind === 'DIALOG'
+    ? { borderRadius: designerRadiusCssValue(props.module.radius) }
+    : {}),
 }))
 </script>
 

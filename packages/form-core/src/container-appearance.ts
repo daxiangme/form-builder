@@ -1,19 +1,19 @@
 import { findDesignerComponent } from './component-registry'
+import { designerRadiusCssValue, normalizeDesignerContainerRadiusOverride } from './radius'
 import type {
   DesignerAppearance,
   DesignerContainerAppearanceDimension,
   DesignerContainerNode,
-  DesignerContainerRadiusOverride,
   DesignerContainerStyleOverride,
   DesignerDocument,
   DesignerLayoutNode,
-  DesignerRadiusPreset,
+  DesignerRadiusValue,
 } from './types'
 
 /** 设计与运行渲染器共同消费的容器外观解析结果。 */
 export interface DesignerResolvedContainerAppearance {
   style: Exclude<DesignerContainerStyleOverride, 'INHERIT'>
-  radius: DesignerRadiusPreset
+  radius: DesignerRadiusValue
   styleSource: 'FORM' | 'COMPONENT'
   radiusSource: 'FORM' | 'COMPONENT'
 }
@@ -31,7 +31,7 @@ export function resolveDesignerContainerAppearance(
   if (registration?.containerAppearance !== 'SURFACE') return undefined
 
   const styleOverride = normalizedStyleOverride(node.configuration.surfaceStyle)
-  const radiusOverride = normalizedRadiusOverride(node.configuration.surfaceRadius)
+  const radiusOverride = normalizeDesignerContainerRadiusOverride(node.configuration.surfaceRadius)
   return {
     style: styleOverride === 'INHERIT' ? appearance.containerStyle : styleOverride,
     radius: radiusOverride === 'INHERIT' ? appearance.containerRadius : radiusOverride,
@@ -40,26 +40,19 @@ export function resolveDesignerContainerAppearance(
   }
 }
 
-/** 返回字段控件圆角对应的公共主题工具类。 */
-export function designerControlRadiusClass(radius: DesignerRadiusPreset): string {
-  return `daxiang-form-control-radius-${radius.toLowerCase()}`
-}
-
-/** 返回弹窗外壳圆角对应的公共主题工具类；旧内存态缺省时继续跟随系统。 */
-export function designerDialogRadiusClass(radius: DesignerRadiusPreset | undefined): string {
-  return `daxiang-form-dialog-radius-${(radius ?? 'THEME').toLowerCase()}`
-}
-
-/** 返回容器表面和圆角对应的公共主题工具类。 */
+/** 返回容器表面对应的公共主题工具类；圆角像素由调用方写入 CSS 变量。 */
 export function designerContainerAppearanceClasses(
   resolved: DesignerResolvedContainerAppearance | undefined,
 ): string[] {
   if (!resolved) return []
-  return [
-    'daxiang-form-container-surface',
-    `is-surface-${resolved.style.toLowerCase()}`,
-    `daxiang-form-container-radius-${resolved.radius.toLowerCase()}`,
-  ]
+  return ['daxiang-form-container-surface', `is-surface-${resolved.style.toLowerCase()}`]
+}
+
+/** 返回容器圆角对应的内联 CSS 变量，供设计画布和运行表面共用。 */
+export function designerContainerRadiusStyle(
+  radius: DesignerRadiusValue,
+): Record<'--daxiang-form-container-radius', string> {
+  return { '--daxiang-form-container-radius': designerRadiusCssValue(radius) }
 }
 
 /** 统计当前文档中支持表面外观的显式容器数量。 */
@@ -114,11 +107,5 @@ function visitSurfaceContainers(
 function normalizedStyleOverride(value: unknown): DesignerContainerStyleOverride {
   return ['INHERIT', 'NONE', 'BORDERED', 'SHADOW', 'FILLED'].includes(String(value))
     ? (value as DesignerContainerStyleOverride)
-    : 'INHERIT'
-}
-
-function normalizedRadiusOverride(value: unknown): DesignerContainerRadiusOverride {
-  return ['INHERIT', 'THEME', 'NONE', 'SMALL', 'BASE', 'LARGE'].includes(String(value))
-    ? (value as DesignerContainerRadiusOverride)
     : 'INHERIT'
 }

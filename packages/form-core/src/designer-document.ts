@@ -15,6 +15,7 @@ import {
   diagnoseDesignerAdvancedDocument,
   normalizeDesignerAdvancedDocument,
 } from './document-advanced'
+import { isDesignerRadiusValue, normalizeDesignerRadiusValue } from './radius'
 import {
   DESIGNER_DOCUMENT_VERSION,
   type DesignerComponentRegistration,
@@ -35,10 +36,10 @@ import {
 } from './types'
 
 const DEFAULT_APPEARANCE: DesignerDocument['appearance'] = {
-  labelPosition: 'LEFT',
+  labelPosition: 'TOP',
   labelWidth: 100,
   labelSuffix: '',
-  labelAlign: 'RIGHT',
+  labelAlign: 'LEFT',
   defaultPlaceholder: '',
   gridGutter: 16,
   rowGap: 8,
@@ -48,7 +49,7 @@ const DEFAULT_APPEARANCE: DesignerDocument['appearance'] = {
   size: 'DEFAULT',
   controlRadius: 'THEME',
   containerStyle: 'NONE',
-  containerRadius: 'BASE',
+  containerRadius: 8,
 }
 
 const SURFACE_CONTAINER_COMPONENT_TYPES = new Set([
@@ -1480,6 +1481,20 @@ function diagnosePropertyValue(
     }
     return
   }
+  if (editor.type === 'RADIUS') {
+    if (editor.includeInherit && value === 'INHERIT') return
+    if (!isDesignerRadiusValue(value)) {
+      result.push(
+        diagnostic(
+          'ERROR',
+          'COMPONENT_CONFIGURATION_RADIUS',
+          `${registration.name}的“${definition.label}”必须是跟随系统或 0～32 的 4 的倍数像素`,
+          path,
+        ),
+      )
+    }
+    return
+  }
   if (editor.type === 'OPTIONS') {
     diagnoseConfigurationOptions(registration, definition.label, value, path, result, new WeakSet())
   }
@@ -1858,7 +1873,7 @@ function diagnoseAppearance(
     )
   if (!['SMALL', 'DEFAULT', 'LARGE'].includes(String(appearance.size)))
     result.push(diagnostic('ERROR', 'APPEARANCE_SIZE', '控件尺寸不正确', `${path}.size`))
-  if (!['THEME', 'NONE', 'SMALL', 'BASE', 'LARGE'].includes(String(appearance.controlRadius)))
+  if (!isDesignerRadiusValue(appearance.controlRadius))
     result.push(
       diagnostic('ERROR', 'APPEARANCE_CONTROL_RADIUS', '控件圆角不正确', `${path}.controlRadius`),
     )
@@ -1871,7 +1886,7 @@ function diagnoseAppearance(
         `${path}.containerStyle`,
       ),
     )
-  if (!['THEME', 'NONE', 'SMALL', 'BASE', 'LARGE'].includes(String(appearance.containerRadius)))
+  if (!isDesignerRadiusValue(appearance.containerRadius))
     result.push(
       diagnostic(
         'ERROR',
@@ -2033,6 +2048,12 @@ function normalizeDesignerDocument(source: unknown): DesignerDocument {
   normalizeDesignerAppearance(normalized.appearance)
   if (isRecord(normalized.uiSchema) && Array.isArray(normalized.uiSchema.root)) {
     normalizeSurfaceContainerConfigurations(normalized.uiSchema.root)
+    if (Array.isArray(normalized.uiSchema.overlays)) {
+      for (const overlay of normalized.uiSchema.overlays) {
+        if (isRecord(overlay) && Array.isArray(overlay.root))
+          normalizeSurfaceContainerConfigurations(overlay.root)
+      }
+    }
     if (isRecord(normalized.dataSchema) && Array.isArray(normalized.dataSchema.fields)) {
       normalizeDesignerDataModel(normalized as unknown as DesignerDocument)
     }
@@ -2044,9 +2065,16 @@ function normalizeDesignerAppearance(source: unknown): void {
   if (!isRecord(source)) return
   if (!('rowGap' in source)) source.rowGap = DEFAULT_APPEARANCE.rowGap
   if (!('controlRadius' in source)) source.controlRadius = 'THEME'
+  else assignNormalizedRadius(source, 'controlRadius')
   if (!('containerStyle' in source)) source.containerStyle = 'NONE'
   // 旧文档没有容器圆角概念，继续跟随系统才能保持首次加载的原视觉。
   if (!('containerRadius' in source)) source.containerRadius = 'THEME'
+  else assignNormalizedRadius(source, 'containerRadius')
+}
+
+function assignNormalizedRadius(source: Record<string, unknown>, key: string): void {
+  const next = normalizeDesignerRadiusValue(source[key])
+  if (next !== undefined) source[key] = next
 }
 
 function normalizeSurfaceContainerConfigurations(nodes: unknown[]): void {
@@ -2061,6 +2089,13 @@ function normalizeSurfaceContainerConfigurations(nodes: unknown[]): void {
       if (!('surfaceStyle' in source.configuration)) source.configuration.surfaceStyle = 'NONE'
       if (!('surfaceRadius' in source.configuration)) source.configuration.surfaceRadius = 'THEME'
       source.configurationVersion = 2
+    }
+    if (isRecord(source.configuration) && 'surfaceRadius' in source.configuration) {
+      const current = source.configuration.surfaceRadius
+      if (current !== 'INHERIT') {
+        const next = normalizeDesignerRadiusValue(current)
+        if (next !== undefined) source.configuration.surfaceRadius = next
+      }
     }
     if (!Array.isArray(source.slots)) continue
     for (const slot of source.slots) {

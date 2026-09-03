@@ -2,7 +2,7 @@
   <ElDialog
     :model-value="modelValue"
     :title="title"
-    :class="['daxiang-form-modal', dialogClass]"
+    :class="['daxiang-form-modal', dialogClass, dialogRadiusBind.class]"
     width="var(--daxiang-form-modal-width)"
     :style="modalStyle"
     :align-center="alignCenter"
@@ -41,6 +41,8 @@
 
 <script setup lang="ts">
 import { computed, type CSSProperties } from 'vue'
+import type { DesignerRadiusValue } from '@daxiangme/form-core'
+import { designerDialogRadiusBind } from '../designer-radius-style'
 
 defineOptions({ name: 'FormModalShell' })
 
@@ -49,6 +51,8 @@ const props = withDefaults(
     modelValue: boolean
     title?: string
     dialogClass?: string
+    /** 弹窗外壳圆角；`THEME` 跟随宿主 `--el-border-radius-base`。 */
+    radius?: DesignerRadiusValue
     width?: string | number
     maxHeight?: string | number
     loading?: boolean
@@ -71,6 +75,7 @@ const props = withDefaults(
   {
     title: '',
     dialogClass: '',
+    radius: 'THEME',
     width: 640,
     maxHeight: 'calc(100vh - var(--daxiang-form-space-4) * 2)',
     loading: false,
@@ -105,10 +110,12 @@ const bodyClass = computed(() =>
     ? 'daxiang-form-modal__content daxiang-form-modal__content--flush-vertical'
     : 'daxiang-form-modal__content',
 )
+const dialogRadiusBind = computed(() => designerDialogRadiusBind(props.radius))
 const modalStyle = computed<CSSProperties>(() => ({
   '--daxiang-form-modal-width': typeof props.width === 'number' ? `${props.width}px` : props.width,
   '--daxiang-form-modal-max-height':
     typeof props.maxHeight === 'number' ? `${props.maxHeight}px` : props.maxHeight,
+  ...dialogRadiusBind.value.style,
 }))
 
 function requestClose() {

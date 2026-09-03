@@ -61,11 +61,8 @@ const CONTAINER_APPEARANCE_PROPERTIES: DesignerPropertyDefinition[] = [
     ],
   }),
   property('surfaceRadius', '容器圆角', 'DISPLAY', {
-    type: 'SELECT',
-    options: selectOptions(
-      ['INHERIT', 'THEME', 'NONE', 'SMALL', 'BASE', 'LARGE'],
-      ['跟随表单', '跟随系统', '直角', '小', '标准', '大'],
-    ),
+    type: 'RADIUS',
+    includeInherit: true,
   }),
 ]
 

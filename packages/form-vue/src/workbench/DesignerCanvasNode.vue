@@ -35,21 +35,28 @@
     v-else-if="node.nodeType === 'CONTAINER'"
     class="designer-canvas-node designer-canvas-node--container"
     :class="[
-      { 'is-selected': selectedNodeId === node.id, 'is-structural': registration?.acceptsChildren },
+      {
+        'is-selected': selectedNodeId === node.id,
+        'is-structural': registration?.acceptsChildren,
+        'is-drop-inside': containerDropPlacement === 'INSIDE',
+      },
       `is-${node.componentType}`,
       ...containerAppearanceClasses,
     ]"
     :data-designer-node-id="node.id"
     :data-designer-node-label="textConfiguration('title') || componentName"
     :data-designer-index="itemIndex"
-    :style="nodeGridStyle"
+    :style="[nodeGridStyle, containerRadiusStyle]"
     @click.stop="emit('select', node.id)"
     @dragenter.prevent="handleContainerDragEnter"
     @dragover.prevent="handleContainerDragOver"
     @dragleave="handleContainerDragLeave"
     @drop.prevent.stop="handleContainerDrop"
   >
-    <DesignerDropIndicator v-if="containerDropPlacement" :placement="containerDropPlacement" />
+    <DesignerDropIndicator
+      v-if="containerDropPlacement === 'BEFORE' || containerDropPlacement === 'AFTER'"
+      :placement="containerDropPlacement"
+    />
 
     <header class="designer-canvas-node__chrome">
       <button
@@ -127,18 +134,16 @@
       :type="tabsType"
     >
       <template #default="{ item: slot }">
-        <DesignerDropZone
-          v-if="slot.children.length === 0"
-          :active="paletteDragActive"
-          @drop="forwardDrop($event, slotDropTarget(slot.slotCode, 0))"
-        />
         <VueDraggable
-          v-else
           class="designer-canvas-node__slot-list"
+          :class="{ 'is-empty': slot.children.length === 0 }"
           :model-value="slot.children"
           :group="sortableGroup"
           :animation="120"
           :disabled="device === 'mobile'"
+          :empty-insert-threshold="sortableNestedEmptyInsertThreshold"
+          invert-swap
+          :swap-threshold="sortableSwapThreshold"
           :on-move="canSortMove"
           draggable=".designer-canvas-node"
           handle=".designer-node-drag-handle"
@@ -151,6 +156,9 @@
           @start="emit('drag-start', $event)"
           @end="emit('drag-end')"
         >
+          <span v-if="slot.children.length === 0" class="designer-canvas-node__empty-hint">
+            放置到这里
+          </span>
           <DesignerGridDropCell
             v-for="gap in slotProjection(slot.slotCode).gaps"
             :key="`${slot.id}-gap-${gap.row}-${gap.start}-${gap.index}`"
@@ -196,88 +204,26 @@
         <ElButton disabled><DxSvgIcon icon="ri:add-line" />新增一行</ElButton>
       </div>
       <template v-for="slot in node.slots" :key="slot.id">
-        <DesignerDropZone
-          v-if="slot.children.length === 0"
-          :active="paletteDragActive"
-          label="拖入字段形成子表列"
-          @drop="forwardDrop($event, slotDropTarget(slot.slotCode, 0))"
-        />
-        <template v-else>
-          <div class="designer-canvas-node__table-head" :style="tableColumnsStyle(slot.slotCode)">
-            <span v-for="column in subtableColumns(slot.slotCode)" :key="column.columnId">
-              {{ column.label }}
-            </span>
-          </div>
-          <VueDraggable
-            class="designer-canvas-node__table-row"
-            :style="tableColumnsStyle(slot.slotCode)"
-            :model-value="slot.children"
-            :group="sortableGroup"
-            :animation="120"
-            :disabled="device === 'mobile'"
-            :on-move="canSortMove"
-            draggable=".designer-canvas-node"
-            handle=".designer-node-drag-handle"
-            ghost-class="designer-canvas-node--ghost"
-            chosen-class="designer-canvas-node--chosen"
-            drag-class="designer-canvas-node--dragging"
-            :data-container-id="node.id"
-            :data-slot-code="slot.slotCode"
-            @update:model-value="updateSlotChildren(slot.slotCode, $event)"
-            @start="emit('drag-start', $event)"
-            @end="emit('drag-end')"
-          >
-            <DesignerCanvasNode
-              v-for="(child, index) in slot.children"
-              :key="child.id"
-              :node="child"
-              :item-index="index"
-              :fields="fields"
-              :selected-node-id="selectedNodeId"
-              :device="device"
-              :gutter="gutter"
-              :appearance="appearance"
-              :grid-cell="slotCell(slot.slotCode, child.id)"
-              :form-label-position="formLabelPosition"
-              :form-label-width="formLabelWidth"
-              :palette-drag-active="paletteDragActive"
-              :drop-target="slotDropTarget(slot.slotCode, index)"
-              :can-sort-move="canSortMove"
-              table-cell
-              @select="emit('select', $event)"
-              @remove="emit('remove', $event)"
-              @duplicate="emit('duplicate', $event)"
-              @drop="forwardDrop"
-              @reorder="forwardReorder"
-              @drag-start="emit('drag-start', $event)"
-              @drag-end="emit('drag-end')"
-            />
-          </VueDraggable>
-        </template>
-      </template>
-    </div>
-
-    <div
-      v-else-if="node.componentType === 'block-subtable' || registration?.acceptsChildren"
-      class="designer-canvas-node__container-content"
-      :class="{ 'is-block-subtable': node.componentType === 'block-subtable' }"
-    >
-      <div v-if="node.componentType === 'block-subtable'" class="designer-canvas-node__block-index">
-        # 1 示例数据块
-      </div>
-      <template v-for="slot in node.slots" :key="slot.id">
-        <DesignerDropZone
-          v-if="slot.children.length === 0"
-          :active="paletteDragActive"
-          @drop="forwardDrop($event, slotDropTarget(slot.slotCode, 0))"
-        />
+        <div
+          v-if="slot.children.length > 0"
+          class="designer-canvas-node__table-head"
+          :style="tableColumnsStyle(slot.slotCode)"
+        >
+          <span v-for="column in subtableColumns(slot.slotCode)" :key="column.columnId">
+            {{ column.label }}
+          </span>
+        </div>
         <VueDraggable
-          v-else
-          class="designer-canvas-node__slot-list"
+          class="designer-canvas-node__table-row"
+          :class="{ 'is-empty': slot.children.length === 0 }"
+          :style="slot.children.length > 0 ? tableColumnsStyle(slot.slotCode) : undefined"
           :model-value="slot.children"
           :group="sortableGroup"
           :animation="120"
           :disabled="device === 'mobile'"
+          :empty-insert-threshold="sortableNestedEmptyInsertThreshold"
+          invert-swap
+          :swap-threshold="sortableSwapThreshold"
           :on-move="canSortMove"
           draggable=".designer-canvas-node"
           handle=".designer-node-drag-handle"
@@ -290,6 +236,72 @@
           @start="emit('drag-start', $event)"
           @end="emit('drag-end')"
         >
+          <span v-if="slot.children.length === 0" class="designer-canvas-node__empty-hint">
+            拖入字段形成子表列
+          </span>
+          <DesignerCanvasNode
+            v-for="(child, index) in slot.children"
+            :key="child.id"
+            :node="child"
+            :item-index="index"
+            :fields="fields"
+            :selected-node-id="selectedNodeId"
+            :device="device"
+            :gutter="gutter"
+            :appearance="appearance"
+            :grid-cell="slotCell(slot.slotCode, child.id)"
+            :form-label-position="formLabelPosition"
+            :form-label-width="formLabelWidth"
+            :palette-drag-active="paletteDragActive"
+            :drop-target="slotDropTarget(slot.slotCode, index)"
+            :can-sort-move="canSortMove"
+            table-cell
+            @select="emit('select', $event)"
+            @remove="emit('remove', $event)"
+            @duplicate="emit('duplicate', $event)"
+            @drop="forwardDrop"
+            @reorder="forwardReorder"
+            @drag-start="emit('drag-start', $event)"
+            @drag-end="emit('drag-end')"
+          />
+        </VueDraggable>
+      </template>
+    </div>
+
+    <div
+      v-else-if="node.componentType === 'block-subtable' || registration?.acceptsChildren"
+      class="designer-canvas-node__container-content"
+      :class="{ 'is-block-subtable': node.componentType === 'block-subtable' }"
+    >
+      <div v-if="node.componentType === 'block-subtable'" class="designer-canvas-node__block-index">
+        # 1 示例数据块
+      </div>
+      <template v-for="slot in node.slots" :key="slot.id">
+        <VueDraggable
+          class="designer-canvas-node__slot-list"
+          :class="{ 'is-empty': slot.children.length === 0 }"
+          :model-value="slot.children"
+          :group="sortableGroup"
+          :animation="120"
+          :disabled="device === 'mobile'"
+          :empty-insert-threshold="sortableNestedEmptyInsertThreshold"
+          invert-swap
+          :swap-threshold="sortableSwapThreshold"
+          :on-move="canSortMove"
+          draggable=".designer-canvas-node"
+          handle=".designer-node-drag-handle"
+          ghost-class="designer-canvas-node--ghost"
+          chosen-class="designer-canvas-node--chosen"
+          drag-class="designer-canvas-node--dragging"
+          :data-container-id="node.id"
+          :data-slot-code="slot.slotCode"
+          @update:model-value="updateSlotChildren(slot.slotCode, $event)"
+          @start="emit('drag-start', $event)"
+          @end="emit('drag-end')"
+        >
+          <span v-if="slot.children.length === 0" class="designer-canvas-node__empty-hint">
+            放置到这里
+          </span>
           <DesignerGridDropCell
             v-for="gap in slotProjection(slot.slotCode).gaps"
             :key="`${slot.id}-gap-${gap.row}-${gap.start}-${gap.index}`"
@@ -337,6 +349,7 @@ import { projectDesignerCanvas } from '@daxiangme/form-core'
 import { findDesignerComponent } from '@daxiangme/form-core'
 import {
   designerContainerAppearanceClasses,
+  designerContainerRadiusStyle,
   resolveDesignerContainerAppearance,
 } from '@daxiangme/form-core'
 import {
@@ -356,10 +369,14 @@ import type {
 } from '@daxiangme/form-core'
 import DesignerStaticControl from '../rendering/DesignerStaticControl.vue'
 import DesignerDropIndicator from './DesignerDropIndicator.vue'
-import DesignerDropZone from './DesignerDropZone.vue'
 import DesignerGridDropCell from './DesignerGridDropCell.vue'
 import DesignerNodeFrame from './DesignerNodeFrame.vue'
 import DesignerTabsFrame from './DesignerTabsFrame.vue'
+import {
+  DESIGNER_CANVAS_NESTED_EMPTY_INSERT_THRESHOLD,
+  DESIGNER_CANVAS_SORTABLE_GROUP,
+  DESIGNER_CANVAS_SWAP_THRESHOLD,
+} from './designer-canvas-sortable'
 
 defineOptions({ name: 'DesignerCanvasNode' })
 
@@ -377,7 +394,7 @@ const props = withDefaults(
     formLabelWidth: number
     paletteDragActive: boolean
     dropTarget: DesignerDropTarget
-    canSortMove: (event: DesignerSortableMoveEvent) => boolean
+    canSortMove: (event: DesignerSortableMoveEvent, originalEvent?: Event) => boolean
     tableCell?: boolean
   }>(),
   { tableCell: false },
@@ -391,8 +408,11 @@ const emit = defineEmits<{
   'drag-start': [event?: SortableEvent]
   'drag-end': []
 }>()
-const sortableGroup = { name: 'daxiang-form-designer-canvas', pull: true, put: true }
-const containerDropPlacement = ref<'BEFORE' | 'AFTER' | ''>('')
+const sortableGroup = DESIGNER_CANVAS_SORTABLE_GROUP
+const sortableNestedEmptyInsertThreshold = DESIGNER_CANVAS_NESTED_EMPTY_INSERT_THRESHOLD
+const sortableSwapThreshold = DESIGNER_CANVAS_SWAP_THRESHOLD
+const containerSiblingEdgePx = 12
+const containerDropPlacement = ref<'BEFORE' | 'AFTER' | 'INSIDE' | ''>('')
 const field = computed(() => {
   const current = props.node
   return current.nodeType === 'FIELD'
@@ -420,6 +440,11 @@ const containerAppearanceClasses = computed(() =>
       )
     : [],
 )
+const containerRadiusStyle = computed(() => {
+  if (props.node.nodeType !== 'CONTAINER') return undefined
+  const resolved = resolveDesignerContainerAppearance(props.appearance, props.node)
+  return resolved ? designerContainerRadiusStyle(resolved.radius) : undefined
+})
 const headingLevel = computed(() => Math.max(1, Math.min(6, numberConfiguration('level') || 3)))
 const headingStyle = computed<CSSProperties>(() => ({
   color: textConfiguration('fontColor') || undefined,
@@ -497,6 +522,18 @@ function slotDropTarget(slotCode: string, index: number): DesignerDropTarget {
   return { containerId: props.node.id, slotCode, index, placement: 'INSIDE' }
 }
 
+/** 把面板组件放入当前容器的活动插槽末尾。 */
+function resolveInsideDropTarget(): DesignerDropTarget | undefined {
+  if (props.node.nodeType !== 'CONTAINER' || !registration.value?.acceptsChildren) return undefined
+  const slotCode =
+    props.node.componentType === 'tabs'
+      ? activeSlot.value || props.node.slots[0]?.slotCode
+      : props.node.slots[0]?.slotCode
+  if (!slotCode) return undefined
+  const slot = props.node.slots.find((item) => item.slotCode === slotCode)
+  return slotDropTarget(slotCode, slot?.children.length ?? 0)
+}
+
 function updateSlotChildren(slotCode: string, children: DesignerLayoutNode[]): void {
   emit('reorder', props.node.id, slotCode, children)
 }
@@ -525,9 +562,7 @@ function handleContainerDragOver(event: DragEvent): void {
 }
 
 function handleContainerDragLeave(event: DragEvent): void {
-  const current = event.currentTarget as HTMLElement | null
-  const related = event.relatedTarget as Node | null
-  if (current && related && current.contains(related)) return
+  if (isPointerInsideElement(event, event.currentTarget as HTMLElement | null)) return
   containerDropPlacement.value = ''
 }
 
@@ -536,6 +571,12 @@ function handleContainerDrop(event: DragEvent): void {
   if (!componentType || !containerDropPlacement.value) return
   const placement = containerDropPlacement.value
   containerDropPlacement.value = ''
+  if (placement === 'INSIDE') {
+    const target = resolveInsideDropTarget()
+    if (!target) return
+    emit('drop', `component:${componentType}`, target)
+    return
+  }
   emit('drop', `component:${componentType}`, {
     ...props.dropTarget,
     index: props.dropTarget.index + (placement === 'AFTER' ? 1 : 0),
@@ -553,7 +594,31 @@ function acceptsPaletteComponent(event: DragEvent): boolean {
 function updateContainerDropPlacement(event: DragEvent): void {
   const element = event.currentTarget as HTMLElement
   const bounds = element.getBoundingClientRect()
+  if (registration.value?.acceptsChildren) {
+    if (event.clientY < bounds.top + containerSiblingEdgePx) {
+      containerDropPlacement.value = 'BEFORE'
+      return
+    }
+    if (event.clientY > bounds.bottom - containerSiblingEdgePx) {
+      containerDropPlacement.value = 'AFTER'
+      return
+    }
+    containerDropPlacement.value = 'INSIDE'
+    return
+  }
   containerDropPlacement.value = event.clientY < bounds.top + bounds.height / 2 ? 'BEFORE' : 'AFTER'
+}
+
+/** 用指针坐标判断是否仍在当前容器内，避免 `relatedTarget` 为空时清掉落点高亮。 */
+function isPointerInsideElement(event: DragEvent, element: HTMLElement | null): boolean {
+  if (!element) return false
+  const bounds = element.getBoundingClientRect()
+  return (
+    event.clientX >= bounds.left &&
+    event.clientX <= bounds.right &&
+    event.clientY >= bounds.top &&
+    event.clientY <= bounds.bottom
+  )
 }
 
 /** 返回设计行、表头和运行态共用的子表列投影。 */
@@ -692,6 +757,14 @@ function normalizedTextAlign(value: string): 'left' | 'center' | 'right' | undef
   background: var(--el-fill-color-extra-light);
 }
 
+.designer-canvas-node--container.is-drop-inside {
+  border-color: var(--el-color-primary-light-5);
+}
+
+.designer-canvas-node--container.is-structural.is-drop-inside {
+  border-style: solid;
+}
+
 .designer-canvas-node__container-content,
 .designer-canvas-node__subtable {
   min-width: 0;
@@ -710,6 +783,29 @@ function normalizedTextAlign(value: string): 'left' | 'center' | 'right' | undef
   grid-template-columns: repeat(24, minmax(0, 1fr));
   grid-auto-rows: minmax(44px, auto);
   gap: var(--designer-row-gap) var(--designer-grid-gutter);
+}
+
+.designer-canvas-node__slot-list.is-empty {
+  min-height: 88px;
+}
+
+.designer-canvas-node__empty-hint {
+  display: flex;
+  min-height: 88px;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  color: var(--el-text-color-placeholder);
+  background: color-mix(in srgb, var(--el-fill-color-light) 64%, transparent);
+  border: 1px dashed var(--el-border-color);
+  grid-column: 1 / -1;
+  font-size: 12px;
+}
+
+.designer-canvas-node--container.is-drop-inside .designer-canvas-node__empty-hint {
+  color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+  border-color: var(--el-color-primary);
 }
 
 .designer-canvas-node__subtable-bar {
@@ -748,6 +844,19 @@ function normalizedTextAlign(value: string): 'left' | 'center' | 'right' | undef
   border-right: 1px solid var(--el-border-color-lighter);
   border-bottom: 1px solid var(--el-border-color-lighter);
   border-left: 1px solid var(--el-border-color-lighter);
+}
+
+.designer-canvas-node__table-row.is-empty {
+  display: flex;
+  min-width: 0;
+  min-height: 88px;
+  align-items: center;
+  justify-content: center;
+}
+
+.designer-canvas-node__table-row.is-empty .designer-canvas-node__empty-hint {
+  width: 100%;
+  min-height: 88px;
 }
 
 .designer-canvas-node__table-row > :deep(.designer-canvas-node) {

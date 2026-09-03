@@ -360,8 +360,15 @@ export interface DesignerContainerNode {
 /** 设计器 UI Schema 节点。 */
 export type DesignerLayoutNode = DesignerFieldNode | DesignerContainerNode
 
-/** 表单字段控件和显式容器共用的受控圆角档位。 */
-export type DesignerRadiusPreset = 'THEME' | 'NONE' | 'SMALL' | 'BASE' | 'LARGE'
+/**
+ * 表单字段控件、显式容器和弹窗共用的受控圆角。
+ *
+ * `THEME` 表示跟随宿主 `--el-border-radius-base`；数字为 0～32 且为 4 的倍数的像素值。
+ */
+export type DesignerRadiusValue = 'THEME' | number
+
+/** @deprecated 请使用 `DesignerRadiusValue`。旧档位会在解码时映射为像素。 */
+export type DesignerRadiusPreset = DesignerRadiusValue
 
 /** 表单显式布局容器允许使用的表面样式。 */
 export type DesignerContainerStyle = 'NONE' | 'BORDERED' | 'SHADOW'
@@ -370,16 +377,18 @@ export type DesignerContainerStyle = 'NONE' | 'BORDERED' | 'SHADOW'
 export type DesignerContainerStyleOverride = 'INHERIT' | DesignerContainerStyle | 'FILLED'
 
 /** 容器节点对表单默认圆角的覆盖值。 */
-export type DesignerContainerRadiusOverride = 'INHERIT' | DesignerRadiusPreset
+export type DesignerContainerRadiusOverride = 'INHERIT' | DesignerRadiusValue
 
 /** 批量恢复容器外观继承时可独立处理的配置维度。 */
 export type DesignerContainerAppearanceDimension = 'STYLE' | 'RADIUS'
 
 /** 表单整体外观配置。 */
 export interface DesignerAppearance {
+  /** 标签相对控件的位置。新建文档默认为顶部。 */
   labelPosition: 'TOP' | 'LEFT' | 'RIGHT'
   labelWidth: number
   labelSuffix: string
+  /** 标签文字对齐。新建文档默认为左对齐；切换到顶部位置时会强制左对齐。 */
   labelAlign: 'LEFT' | 'RIGHT'
   defaultPlaceholder: string
   gridGutter: number
@@ -389,12 +398,20 @@ export interface DesignerAppearance {
   defaultMobileSpan: number
   readonlyDisplayMode: 'CONTROL' | 'TEXT'
   size: 'SMALL' | 'DEFAULT' | 'LARGE'
-  /** 普通字段控件统一使用的圆角；THEME 表示继续跟随系统主题。 */
-  controlRadius: DesignerRadiusPreset
+  /**
+   * 普通字段控件统一使用的圆角。
+   *
+   * `THEME` 跟随宿主 `--el-border-radius-base`；数字为 0～32 且为 4 的倍数的像素值。
+   */
+  controlRadius: DesignerRadiusValue
   /** 支持表面的显式布局容器在未覆盖时使用的默认样式。 */
   containerStyle: DesignerContainerStyle
-  /** 支持表面的显式布局容器在未覆盖时使用的默认圆角。 */
-  containerRadius: DesignerRadiusPreset
+  /**
+   * 支持表面的显式布局容器在未覆盖时使用的默认圆角。
+   *
+   * `THEME` 跟随宿主主题；数字为 0～32 且为 4 的倍数的像素值。新建文档默认为 8。
+   */
+  containerRadius: DesignerRadiusValue
 }
 
 /** 表单提交时对普通隐藏字段的统一处理策略。 */
@@ -529,8 +546,12 @@ export interface DesignerOverlayModule {
   kind: DesignerOverlayKind
   dataContext: DesignerOverlayDataContext
   width: number
-  /** 弹窗使用的受控圆角档位；抽屉保留该值但不渲染圆角。 */
-  radius: DesignerRadiusPreset
+  /**
+   * 弹窗使用的受控圆角；抽屉保留该值但不渲染圆角。
+   *
+   * `THEME` 跟随宿主 `--el-border-radius-base`；数字为 0～32 且为 4 的倍数的像素值。
+   */
+  radius: DesignerRadiusValue
   /** 弹窗运行最大高度；抽屉保留该值但继续占满可用高度。 */
   maxHeightPreset: DesignerOverlayMaxHeightPreset
   root: DesignerLayoutNode[]
@@ -632,6 +653,15 @@ export type DesignerPropertyEditor =
       minimum?: number
       maximum?: number
       unit?: string
+    })
+  | (DesignerPropertyEditorBase & {
+      /**
+       * 圆角选择器。预设为跟随系统与常用 4 的倍数像素，检查器允许手输其它合法值。
+       *
+       * `includeInherit` 为真时增加「跟随表单」，供容器级覆盖使用。
+       */
+      type: 'RADIUS'
+      includeInherit?: boolean
     })
   | (DesignerPropertyEditorBase & { type: 'COLOR' })
   | (DesignerPropertyEditorBase & { type: 'OPTIONS' })
@@ -1040,6 +1070,7 @@ export interface DesignerSortableMoveEvent {
   dragged: HTMLElement
   related: HTMLElement
   to: HTMLElement
+  from?: HTMLElement
   willInsertAfter?: boolean
 }
 
