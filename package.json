@@ -1,6 +1,6 @@
 {
   "name": "form-builder-workspace",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "Visual form designer and schema-driven renderer for Vue 3 and Element Plus",
   "license": "MIT",
