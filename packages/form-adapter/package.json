@@ -38,7 +38,7 @@
     "pack:dry-run": "npm pack --dry-run"
   },
   "dependencies": {
-    "@daxiangme/form-core": "0.1.3"
+    "@daxiangme/form-core": "0.1.4"
   },
   "publishConfig": {
     "access": "public"
