@@ -30,14 +30,26 @@ import '@daxiangme/form-vue/style.css'
 
 ## 注册组件
 
+库构建已把 Element Plus 控件编译为 `import { ElButton } from 'element-plus'`。按需宿主（`unplugin-vue-components` 等）**不必** `app.use(ElementPlus)`；引入 Vue 3、Element Plus peer 与样式后直接导入两个公共组件即可：
+
 ```ts
 import { createApp } from 'vue'
-import ElementPlus from 'element-plus'
+import { FormDesigner, FormRenderer } from '@daxiangme/form-vue'
+
+import App from './App.vue'
+
+createApp(App).mount('#app')
+```
+
+已经全量 `app.use(ElementPlus)` 的工程仍然兼容。可选插件 `DaxiangFormVue` 只把 `FormDesigner` / `FormRenderer` 注册为全局组件，不负责安装 Element Plus：
+
+```ts
+import { createApp } from 'vue'
 import { DaxiangFormVue } from '@daxiangme/form-vue'
 
 import App from './App.vue'
 
-createApp(App).use(ElementPlus).use(DaxiangFormVue).mount('#app')
+createApp(App).use(DaxiangFormVue).mount('#app')
 ```
 
 ## 设计表单

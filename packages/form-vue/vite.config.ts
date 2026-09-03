@@ -1,9 +1,19 @@
 import vue from '@vitejs/plugin-vue'
 import { defineConfig } from 'vite'
 import dts from 'vite-plugin-dts'
+import Components from 'unplugin-vue-components/vite'
+import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 
 export default defineConfig({
-  plugins: [vue(), dts({ rollupTypes: true })],
+  plugins: [
+    vue(),
+    Components({
+      dts: false,
+      directives: true,
+      resolvers: [ElementPlusResolver({ importStyle: false })],
+    }),
+    dts({ rollupTypes: true }),
+  ],
   build: {
     lib: {
       entry: 'src/index.ts',
@@ -12,7 +22,7 @@ export default defineConfig({
       cssFileName: 'style',
     },
     rollupOptions: {
-      external: ['vue', 'element-plus', '@daxiangme/form-core'],
+      external: ['vue', 'element-plus', '@daxiangme/form-core', /^element-plus\//],
     },
     sourcemap: true,
     emptyOutDir: true,
