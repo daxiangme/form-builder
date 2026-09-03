@@ -68,7 +68,9 @@
         :filterable="booleanConfiguration('filterable')"
         :placeholder="placeholder"
         :disabled="controlDisabled"
+        :loading="optionLoading"
         @update:model-value="updateValue"
+        @visible-change="(visible: boolean) => visible && loadDynamicOptions()"
       >
         <ElOption
           v-for="option in options"
@@ -141,7 +143,7 @@
         start-placeholder="开始日期"
         end-placeholder="结束日期"
         :disabled="controlDisabled"
-        @update:model-value="updateValue"
+        @update:model-value="updateDateRange"
       />
       <ElDatePicker
         v-else-if="componentType === 'date-multiple'"
@@ -255,14 +257,23 @@
         隐藏字段 · 运行时不展示
       </ElTag>
 
-      <DesignerSignatureField
-        v-else-if="componentType === 'signature'"
-        :model-value="signatureValue"
-        :disabled="controlDisabled"
-        :line-width="numberConfiguration('lineWidth') || 2"
-        :pen-color="textConfiguration('penColor') || '#111827'"
-        @update:model-value="updateValue"
-      />
+      <div v-else-if="componentType === 'signature'" class="designer-static-control__serial">
+        <DesignerSignatureField
+          :model-value="signatureValue"
+          :disabled="controlDisabled"
+          :line-width="numberConfiguration('lineWidth') || 2"
+          :pen-color="textConfiguration('penColor') || '#111827'"
+          @update:model-value="updateValue"
+        />
+        <ElButton
+          v-if="booleanConfiguration('allowPersonalSignatureReuse')"
+          :disabled="controlDisabled || !adapters?.personalSignature"
+          :loading="capabilityLoading"
+          @click="reusePersonalSignature"
+        >
+          使用个人签名
+        </ElButton>
+      </div>
 
       <div v-else-if="componentType === 'opinion'" class="designer-static-control__opinion">
         <ElInput
@@ -311,7 +322,7 @@
         :show-all-levels="booleanConfiguration('showFullPath')"
         :separator="textConfiguration('separator') || ' / '"
         placeholder="请选择省 / 市 / 区"
-        :disabled="controlDisabled"
+        :disabled="controlDisabled || !adapters?.region"
         @update:model-value="updateValue"
       />
 
@@ -416,7 +427,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import type { CascaderOption, UploadFile, UploadUserFile } from 'element-plus'
 import DxSvgIcon from '../infrastructure/FormIcon.vue'
 import { findDesignerComponent } from '@daxiangme/form-core'
@@ -453,6 +464,9 @@ const emit = defineEmits<{
   'update:modelValue': [value: unknown]
   'runtime-warning': [message: string]
 }>()
+const optionLoading = ref(false)
+const remoteOptions = ref<DesignerOption[]>([])
+const remoteRegionOptions = ref<CascaderOption[]>([])
 const assetAdapter = computed<FormAssetAdapter | undefined>(() => props.adapters?.asset)
 const registration = computed(() => findDesignerComponent(props.field.componentType))
 const componentType = computed(() => props.field.componentType)
@@ -503,7 +517,9 @@ const dateValue = computed(() =>
   props.modelValue instanceof Date || typeof props.modelValue === 'string' ? props.modelValue : '',
 )
 const options = computed<DesignerOption[]>(() =>
-  normalizeOptions(props.field.configuration.options),
+  remoteOptions.value.length
+    ? remoteOptions.value
+    : normalizeOptions(props.field.configuration.options),
 )
 const cascaderOptions = computed<CascaderOption[]>(() =>
   normalizeOptions(props.field.configuration.options).map(toCascaderOption),
@@ -519,33 +535,11 @@ const localPickerTypes = [
   'data-dialog',
 ]
 const localPickerMultiple = computed(() => textConfiguration('selectionMode') === 'MULTIPLE')
-const regionOptions = computed<CascaderOption[]>(() => [
-  {
-    label: '华北地区',
-    value: 'north',
-    children: [
-      {
-        label: '北京市',
-        value: 'beijing',
-        children: [
-          { label: '东城区', value: 'dongcheng' },
-          { label: '海淀区', value: 'haidian' },
-        ],
-      },
-    ],
-  },
-  {
-    label: '华东地区',
-    value: 'east',
-    children: [
-      {
-        label: '上海市',
-        value: 'shanghai',
-        children: [{ label: '浦东新区', value: 'pudong' }],
-      },
-    ],
-  },
-])
+const regionOptions = computed<CascaderOption[]>(() =>
+  remoteRegionOptions.value.length
+    ? remoteRegionOptions.value
+    : normalizeOptions(props.field.configuration.options).map(toCascaderOption),
+)
 const dictionaryOptions = computed(() => [
   {
     value: 'business',
@@ -747,6 +741,125 @@ function normalizeAssetIds(value: unknown): string[] {
 
 function reportAssetFailure(error: unknown, fallback: string): void {
   emit('runtime-warning', error instanceof Error ? error.message : fallback)
+}
+
+onMounted(() => {
+  void loadRemoteCatalogs()
+})
+
+watch(
+  () => [props.field.id, props.adapters, componentType.value],
+  () => {
+    void loadRemoteCatalogs()
+  },
+)
+
+/** 加载动态选项、地区树和已选值回显；缺少 Adapter 时保留静态配置并警告。 */
+async function loadRemoteCatalogs(): Promise<void> {
+  if (componentType.value === 'dynamic-select' || componentType.value === 'dynamic-cascade') {
+    await loadDynamicOptions(true)
+  }
+  if (componentType.value === 'region') {
+    await loadRegionOptions()
+  }
+}
+
+/** 查询动态选项；已选值通过 resolveValues 回显。 */
+async function loadDynamicOptions(resolveSelected = false): Promise<void> {
+  const adapter = props.adapters?.dynamicOption
+  if (componentType.value !== 'dynamic-select' && componentType.value !== 'dynamic-cascade') return
+  if (!adapter) {
+    emit('runtime-warning', '当前宿主未提供动态选项 Adapter，已保留静态选项且禁止远程查询')
+    return
+  }
+  if (optionLoading.value) return
+  optionLoading.value = true
+  try {
+    const selected = Array.isArray(props.modelValue)
+      ? props.modelValue.filter((item): item is string | number | boolean =>
+          ['string', 'number', 'boolean'].includes(typeof item),
+        )
+      : ['string', 'number', 'boolean'].includes(typeof props.modelValue)
+        ? [props.modelValue as string | number | boolean]
+        : []
+    const result = await adapter.query({
+      fieldId: props.field.id,
+      fieldCode: props.field.key,
+      pageNo: 1,
+      resolveValues: resolveSelected ? selected : [],
+      context: props.adapterContext,
+    })
+    remoteOptions.value = result.items
+  } catch (error) {
+    reportAssetFailure(error, '动态选项查询失败')
+  } finally {
+    optionLoading.value = false
+  }
+}
+
+/** 通过地区 Adapter 加载级联树；缺少端口时不使用演示数据。 */
+async function loadRegionOptions(): Promise<void> {
+  const adapter = props.adapters?.region
+  if (!adapter) {
+    emit('runtime-warning', '当前宿主未提供地区级联 Adapter，地区选择不可用')
+    remoteRegionOptions.value = []
+    return
+  }
+  try {
+    if (adapter.loadTree) {
+      const result = await adapter.loadTree({
+        maximumLevel: numberConfiguration('maximumLevel') || 3,
+        context: props.adapterContext,
+      })
+      remoteRegionOptions.value = result.items.map(toCascaderOption)
+      return
+    }
+    if (!adapter.queryChildren) return
+    const roots = await adapter.queryChildren({ context: props.adapterContext })
+    remoteRegionOptions.value = roots.map(toCascaderOption)
+  } catch (error) {
+    reportAssetFailure(error, '地区数据加载失败')
+  }
+}
+
+/** 日期范围变化后交给 Adapter 计算派生值，失败时只保留用户选择。 */
+async function updateDateRange(value: unknown): Promise<void> {
+  updateValue(value)
+  const adapter = props.adapters?.dateRange
+  if (!adapter || !Array.isArray(value) || value.length < 2) return
+  try {
+    await adapter.calculate({
+      fieldId: props.field.id,
+      fieldCode: props.field.key,
+      startValue: String(value[0] ?? ''),
+      endValue: String(value[1] ?? ''),
+      context: props.adapterContext,
+    })
+  } catch (error) {
+    reportAssetFailure(error, '日期范围计算失败')
+  }
+}
+
+/** 复用账户中心个人签名；缺少 Adapter 时失败关闭。 */
+async function reusePersonalSignature(): Promise<void> {
+  const adapter = props.adapters?.personalSignature
+  if (!adapter || controlDisabled.value) {
+    emit('runtime-warning', '当前宿主未提供个人签名 Adapter')
+    return
+  }
+  capabilityLoading.value = true
+  try {
+    const asset = await adapter.reuse({
+      fieldId: props.field.id,
+      fieldCode: props.field.key,
+      context: props.adapterContext,
+    })
+    updateValue(asset.assetId)
+  } catch (error) {
+    reportAssetFailure(error, '个人签名复用失败')
+  } finally {
+    capabilityLoading.value = false
+  }
 }
 
 async function scanCode(): Promise<void> {

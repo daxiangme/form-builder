@@ -64,6 +64,7 @@
       >
         <DesignerPalette
           v-show="leftTab === 'components'"
+          :catalogs="catalogs"
           @add="addComponent"
           @apply-template="applyTemplate"
         />
@@ -299,7 +300,11 @@ import {
   collectDesignerBatchDefaultFields,
   previewDesignerQuickGrid,
 } from '@daxiangme/form-core'
-import { compatibleDesignerComponents, findDesignerComponent } from '@daxiangme/form-core'
+import {
+  compatibleDesignerComponents,
+  findDesignerComponent,
+  resolveDesignerCatalogComponents,
+} from '@daxiangme/form-core'
 import { applyDesignerContainerAppearanceInheritance } from '@daxiangme/form-core'
 import {
   collectPlacedRelationCodes,
@@ -362,6 +367,7 @@ import type {
   DesignerRelationPatch,
   DesignerRuntimeAdapters,
   DesignerRootEntityPatch,
+  FormDesignerCatalogs,
   FormRuntimeAdapterContext,
 } from '@daxiangme/form-core'
 import DesignerPreviewForm from './rendering/DesignerPreviewForm.vue'
@@ -385,6 +391,7 @@ defineOptions({ name: 'FormDesigner' })
 const props = defineProps<{
   modelValue: DesignerDocument
   initialDataModel?: DesignerInitialDataModel
+  catalogs?: FormDesignerCatalogs
   adapters?: DesignerRuntimeAdapters
   adapterContext?: FormRuntimeAdapterContext
   /** @deprecated 请使用 adapters。 */
@@ -500,6 +507,9 @@ const selectedSupportedEvents = computed<DesignerComponentEvent[]>(() => {
   return registration?.supportedEvents ?? ['CHANGE', 'BLUR', 'FOCUS']
 })
 const hostAdapters = computed(() => props.adapters ?? props.runtimeAdapters)
+const catalogComponents = computed(
+  () => resolveDesignerCatalogComponents(props.catalogs).components,
+)
 const adapterContext = computed<FormRuntimeAdapterContext>(() => props.adapterContext ?? {})
 const effectiveRuntimeAdapters = computed<DesignerRuntimeAdapters>(() => ({
   ...hostAdapters.value,
@@ -608,7 +618,9 @@ function addComponent(componentType: string): void {
 }
 
 function addComponentAt(componentType: string, target: DesignerDropTarget): void {
-  const registration = findDesignerComponent(componentType)
+  const registration =
+    catalogComponents.value.find((item) => item.componentType === componentType) ??
+    findDesignerComponent(componentType)
   if (!registration) {
     ElMessage.error(`组件 ${componentType} 未注册`)
     return
@@ -962,7 +974,10 @@ function updateField(patch: Partial<DesignerField>): void {
 
 function changeFieldComponent(componentType: string): void {
   const source = selectedField.value
-  const target = source ? findDesignerComponent(componentType) : undefined
+  const target = source
+    ? (catalogComponents.value.find((item) => item.componentType === componentType) ??
+      findDesignerComponent(componentType))
+    : undefined
   if (!source || !target || target.nodeKind !== 'FIELD') return
   if (
     !compatibleDesignerComponents(source.semanticType).some(

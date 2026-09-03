@@ -85,13 +85,20 @@
           {{ textConfiguration('text') || '按钮' }}
         </ElButton>
       </div>
-      <ElAlert
-        v-else-if="node.componentType === 'captcha'"
-        type="warning"
-        :closable="false"
-        show-icon
-        title="当前部署未配置短信或邮箱验证码渠道"
-      />
+      <div v-else-if="node.componentType === 'captcha'" class="designer-runtime-node__button">
+        <ElButton
+          :disabled="mode === 'READ_ONLY' || mode === 'DETAIL' || !adapters?.challenge"
+          :loading="challengeLoading"
+          @click="issueChallenge"
+        >
+          获取验证码
+        </ElButton>
+        <small class="designer-runtime-node__help">{{
+          adapters?.challenge
+            ? '验证码由宿主挑战 Adapter 签发'
+            : '当前宿主未提供验证码 Adapter，挑战已失败关闭'
+        }}</small>
+      </div>
       <ElAlert
         v-else-if="node.componentType === 'iframe'"
         type="info"
@@ -356,6 +363,36 @@ const emit = defineEmits<{
   ]
   'runtime-warning': [message: string]
 }>()
+const challengeLoading = ref(false)
+
+/** 通过宿主挑战 Adapter 签发验证码；缺少端口或只读模式时失败关闭。 */
+async function issueChallenge(): Promise<void> {
+  if (props.mode === 'READ_ONLY' || props.mode === 'DETAIL') {
+    emit('runtime-warning', '只读或详情模式不允许发起验证码挑战')
+    return
+  }
+  const adapter = props.adapters?.challenge
+  if (!adapter) {
+    emit('runtime-warning', '当前宿主未提供验证码 Adapter，挑战已失败关闭')
+    return
+  }
+  challengeLoading.value = true
+  try {
+    const result = await adapter.issue({
+      fieldId: props.node.id,
+      fieldCode: field.value?.key ?? props.node.id,
+      context: props.adapterContext,
+    })
+    if (result.challengeId) {
+      emit('update-field-value', field.value?.id ?? props.node.id, result.challengeId)
+    }
+  } catch (error) {
+    emit('runtime-warning', error instanceof Error ? error.message : '验证码挑战失败')
+  } finally {
+    challengeLoading.value = false
+  }
+}
+
 const field = computed(() => {
   const node = props.node
   return node.nodeType === 'FIELD'

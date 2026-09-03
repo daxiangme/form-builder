@@ -75,11 +75,18 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import DxSvgIcon from '../infrastructure/FormIcon.vue'
-import { DESIGNER_COMPONENTS } from '@daxiangme/form-core'
-import type { DesignerComponentGroup, DesignerComponentRegistration } from '@daxiangme/form-core'
+import { resolveDesignerCatalogComponents } from '@daxiangme/form-core'
+import type {
+  DesignerComponentGroup,
+  DesignerComponentRegistration,
+  FormDesignerCatalogs,
+} from '@daxiangme/form-core'
 
 defineOptions({ name: 'DesignerPalette' })
 
+const props = defineProps<{
+  catalogs?: FormDesignerCatalogs
+}>()
 const emit = defineEmits<{
   add: [componentType: string]
   'apply-template': [templateCode: 'TWO_COLUMN' | 'SECTIONED' | 'SHOWCASE']
@@ -101,11 +108,14 @@ const GROUPS: Array<{ code: DesignerComponentGroup; label: string }> = [
   { code: 'SUBTABLE', label: '子表组件' },
   { code: 'AUXILIARY', label: '辅助组件' },
 ]
+const catalogComponents = computed(
+  () => resolveDesignerCatalogComponents(props.catalogs).components,
+)
 const groups = computed(() => {
   const query = keyword.value.trim().toLowerCase()
   return GROUPS.map((group) => ({
     ...group,
-    items: DESIGNER_COMPONENTS.filter(
+    items: catalogComponents.value.filter(
       (item) =>
         item.group === group.code &&
         (!query || item.name.includes(query) || item.componentType.includes(query)),

@@ -5,6 +5,7 @@ import './style.css'
 
 /** 普通 Vue 宿主可直接从主包使用的文档创建、编解码与诊断门面。 */
 export {
+  createDefaultDesignerFieldBehavior,
   createDemoDesignerDocument,
   createEmptyDesignerDocument,
   decodeDesignerDocument,
@@ -14,14 +15,23 @@ export {
 
 /** 普通 Vue 宿主可直接从主包引用的稳定公共类型。 */
 export type {
+  DesignerAppearance,
   DesignerDiagnostic,
   DesignerDocument,
   DesignerDocumentDecodeResult,
+  DesignerField,
+  DesignerFieldId,
+  DesignerInitialDataModel,
+  DesignerLayoutNode,
   DesignerRuntimeAdapters,
   DesignerRuntimeMode,
   DesignerRuntimeValueStore,
   DesignerSubmissionProjection,
   DesignerValidationResult,
+  FormDesignerCatalogs,
+  FormDesignerHostCapabilities,
+  FormFieldAccessLevel,
+  FormFieldAccessMap,
   FormRuntimeAdapterContext,
   FormRuntimeAdapters,
 } from '@daxiangme/form-core'

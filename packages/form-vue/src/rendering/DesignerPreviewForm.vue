@@ -223,6 +223,9 @@ import {
   applyDesignerValueRules,
   createDesignerFieldFeedbackKey,
   projectDesignerFieldFeedback,
+  applyDesignerFieldAccess,
+  isDesignerRuntimeWriteBlocked,
+  readDesignerFieldAccess,
   resolveDesignerFieldState,
   validateDesignerField,
 } from '@daxiangme/form-core'
@@ -243,6 +246,7 @@ import type {
   DesignerRuntimeValueStore,
   DesignerSubtableRow,
   DesignerValidationResult,
+  FormFieldAccessMap,
   FormRuntimeAdapterContext,
   DesignerSubmissionProjection,
 } from '@daxiangme/form-core'
@@ -255,6 +259,7 @@ const props = withDefaults(
     document: DesignerDocument
     modelValue?: DesignerRuntimeValueStore
     mode?: Exclude<DesignerRuntimeMode, 'DESIGN'>
+    fieldAccess?: FormFieldAccessMap
     device?: DesignerDevice
     adapters?: DesignerRuntimeAdapters
     adapterContext?: FormRuntimeAdapterContext
@@ -448,6 +453,7 @@ function openInitialOverlay(moduleCode: string): void {
 
 /** 更新根表字段，执行受控计算规则；组件事件由渲染节点随后触发。 */
 async function updateFieldValue(fieldId: string, value: unknown): Promise<void> {
+  if (rejectWriteAction('字段写入')) return
   valueStore.fields[fieldId] = value
   await applyValueRules(valueStore, 'CHANGE', [fieldId])
   await applyCollectionValueRules(valueStore, undefined, 'CHANGE', [fieldId])
@@ -456,6 +462,7 @@ async function updateFieldValue(fieldId: string, value: unknown): Promise<void> 
 
 /** 更新指定子表容器的多行值。 */
 function updateCollection(containerId: string, rows: DesignerSubtableRow[]): void {
+  if (rejectWriteAction('集合写入')) return
   valueStore.collections[containerId] = rows
   void applyCollectionValueRules(valueStore, rows)
   emitRuntimeValue()
@@ -463,7 +470,7 @@ function updateCollection(containerId: string, rows: DesignerSubtableRow[]): voi
 
 /** 更新弹层草稿字段，不提前污染主体。 */
 async function updateOverlayFieldValue(fieldId: string, value: unknown): Promise<void> {
-  if (!overlayValueStore.value) return
+  if (rejectWriteAction('模块字段写入') || !overlayValueStore.value) return
   overlayValueStore.value.fields[fieldId] = value
   await applyValueRules(overlayValueStore.value, 'CHANGE', [fieldId])
   await applyCollectionValueRules(overlayValueStore.value, undefined, 'CHANGE', [fieldId])
@@ -471,7 +478,7 @@ async function updateOverlayFieldValue(fieldId: string, value: unknown): Promise
 
 /** 更新弹层草稿中的子表集合。 */
 function updateOverlayCollection(containerId: string, rows: DesignerSubtableRow[]): void {
-  if (!overlayValueStore.value) return
+  if (rejectWriteAction('模块集合写入') || !overlayValueStore.value) return
   overlayValueStore.value.collections[containerId] = rows
   void applyCollectionValueRules(overlayValueStore.value, rows)
 }
@@ -496,6 +503,7 @@ async function handleComponentEvent(
 
 /** 执行动作栏按钮；只读和详情态不产生写入动作。 */
 function runAction(action: DesignerActionBarButton['action']): void {
+  if (action !== 'PRINT' && rejectWriteAction(action === 'SUBMIT' ? '提交' : '重置')) return
   emit('action', action)
   if (action === 'SUBMIT') void submitForm()
   if (action === 'RESET') resetForm()
@@ -504,6 +512,7 @@ function runAction(action: DesignerActionBarButton['action']): void {
 
 /** 先执行提交前事件和完整验证，再生成纯前端提交投影。 */
 async function submitForm(): Promise<void> {
+  if (rejectWriteAction('提交')) return
   if (submitting.value) throw new Error('表单正在提交，不能重复进入提交动作')
   submitting.value = true
   try {
@@ -527,6 +536,7 @@ async function submitForm(): Promise<void> {
 
 /** 恢复默认值并触发表单重置事件。 */
 function resetForm(): void {
+  if (rejectWriteAction('重置')) return
   initializeRuntime(props.document, false)
   void runFormEvent('RESET')
   runtimeNotice.value = { type: 'info', message: '已恢复表单默认值' }
@@ -660,6 +670,7 @@ function openModule(
 
 /** 确认模块草稿，并合并回它打开时的数据上下文。 */
 function confirmActiveModule(moduleCode = activeOverlayCode.value): void {
+  if (rejectWriteAction('模块确认')) return
   if (!activeOverlay.value || activeOverlay.value.code !== moduleCode || !overlayValueStore.value)
     return
   if (activeOverlay.value.dataContext === 'SUBTABLE_ROW_DRAFT' && overlaySourceRow.value) {
@@ -720,6 +731,7 @@ async function runFlow(
         DEVICE: props.device,
       },
       adapters: props.adapters,
+      runtimeMode: modeModel.value,
       validate: validateForm,
       submit: submitForm,
       reset: resetForm,
@@ -799,9 +811,25 @@ function resolveFieldStates(
   return Object.fromEntries(
     props.document.dataSchema.fields.map((field) => [
       field.id,
-      resolveDesignerFieldState(field, expressionRuntime(store)),
+      applyDesignerFieldAccess(field, resolveDesignerFieldState(field, expressionRuntime(store)), {
+        mode: modeModel.value,
+        access: readDesignerFieldAccess(props.fieldAccess, field.id),
+      }),
     ]),
   )
+}
+
+/**
+ * 在渲染和事件分发两层拒绝只读/详情写动作。
+ *
+ * @param action 被拒绝的写动作名称
+ * @returns 当前模式禁止写入时返回 true
+ */
+function rejectWriteAction(action: string): boolean {
+  if (!isDesignerRuntimeWriteBlocked(modeModel.value)) return false
+  emit('runtime-warning', `只读或详情模式不允许${action}`)
+  showRuntimeWarning(`只读或详情模式不允许${action}`)
+  return true
 }
 
 /** 建立表达式运行上下文，当前行仅在子表事件或校验期间注入。 */
