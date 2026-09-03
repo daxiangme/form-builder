@@ -1,4 +1,5 @@
 import type {
+  DesignerOption,
   FormAssetReference,
   FormRuntimeAdapterContext,
   FormRuntimeAdapters,
@@ -47,9 +48,16 @@ export function createDxBpmFormAdapter(
         return { ...reference }
       },
       async resolve(request) {
-        return request.assetIds.map((assetId) => ({
-          ...(metadata.get(assetId) ?? { assetId, name: assetId, size: 0 }),
-        }))
+        return request.assetIds.map((assetId) => {
+          const cached = metadata.get(assetId)
+          if (cached) return { ...cached }
+          const fromContext = readFileMetadata(request.context, assetId)
+          if (fromContext) {
+            metadata.set(assetId, fromContext)
+            return { ...fromContext }
+          }
+          return { assetId, name: assetId, size: 0 }
+        })
       },
       async download(request) {
         const recordToken = requireContextText(
@@ -97,6 +105,85 @@ export function createDxBpmFormAdapter(
         return globalThis.confirm(message)
       },
     },
+    dynamicOption: {
+      async query(request) {
+        const response = await options.transport.request({
+          method: 'POST',
+          path: `${basePath}/fields/${segment(request.fieldCode)}/options/queries`,
+          body: {
+            keyword: request.keyword,
+            parentValues: request.parentValues ?? {},
+            pageNo: request.pageNo,
+            pageSize: request.pageSize,
+            recordToken: request.context.recordToken,
+            processTaskId: extensionText(request.context, 'processTaskId'),
+            resolveValues: request.resolveValues ?? [],
+          },
+        })
+        const payload = requireRecord(unwrapDxPayload(response), '动态选项响应')
+        const items = Array.isArray(payload.items) ? payload.items : []
+        return {
+          items: items.map(decodeOption),
+          totalCount: typeof payload.totalCount === 'number' ? payload.totalCount : items.length,
+        }
+      },
+    },
+    dateRange: {
+      async calculate(request) {
+        const response = await options.transport.request({
+          method: 'POST',
+          path: `${basePath}/fields/${segment(request.fieldCode)}/date-range/calculations`,
+          body: {
+            startValue: request.startValue,
+            endValue: request.endValue,
+            recordToken: request.context.recordToken,
+            processTaskId: extensionText(request.context, 'processTaskId'),
+          },
+        })
+        return requireRecord(unwrapDxPayload(response), '日期范围计算响应')
+      },
+    },
+    challenge: {
+      async issue(request) {
+        const response = await options.transport.request({
+          method: 'POST',
+          path: `${basePath}/challenges`,
+          query: {
+            recordToken: request.context.recordToken,
+            processTaskId: extensionText(request.context, 'processTaskId'),
+            fieldCode: request.fieldCode,
+          },
+        })
+        const payload = requireRecord(unwrapDxPayload(response), '验证码挑战响应')
+        const challengeId = payload.challengeId ?? payload.id
+        return {
+          challengeId: requireGenericText(challengeId, 'challengeId'),
+          expiresAt: typeof payload.expiresAt === 'string' ? payload.expiresAt : undefined,
+        }
+      },
+    },
+    personalSignature: {
+      async reuse(request) {
+        const response = await options.transport.request({
+          method: 'POST',
+          path: `${basePath}/fields/${segment(request.fieldCode)}/personal-signature`,
+          query: {
+            recordToken: request.context.recordToken,
+            processTaskId: extensionText(request.context, 'processTaskId'),
+            signatureId: request.signatureId,
+          },
+        })
+        const attachment = decodeAttachment(response)
+        const reference: FormAssetReference = {
+          assetId: attachment.fileId,
+          name: attachment.name,
+          size: attachment.sizeBytes,
+          contentType: attachment.contentType,
+        }
+        metadata.set(reference.assetId, reference)
+        return { ...reference }
+      },
+    },
   }
   if (options.navigateResource) {
     adapters.navigation = {
@@ -109,7 +196,7 @@ export function createDxBpmFormAdapter(
       navigateResource: options.navigateResource,
     }
   }
-  return adapters
+  return { ...adapters, ...options.extras }
 }
 
 function runtimePath(context: FormRuntimeAdapterContext): string {
@@ -138,9 +225,13 @@ function unwrapDxPayload(response: unknown): unknown {
   const source = response as Record<string, unknown>
   if (!('code' in source)) return response
   if (source.code !== 0) {
-    throw new Error(typeof source.msg === 'string' && source.msg ? source.msg : 'DX BPM 请求失败')
+    const message =
+      (typeof source.message === 'string' && source.message) ||
+      (typeof source.msg === 'string' && source.msg) ||
+      'DX BPM 请求失败'
+    throw new Error(message)
   }
-  return source.data
+  return 'data' in source ? source.data : response
 }
 
 function requireRecord(value: unknown, label: string): Record<string, unknown> {
@@ -153,6 +244,61 @@ function requireRecord(value: unknown, label: string): Record<string, unknown> {
 function requirePayloadText(value: unknown, label: string): string {
   if (typeof value !== 'string' || !value.trim()) throw new Error(`附件上传响应 ${label} 不合法`)
   return value
+}
+
+function requireGenericText(value: unknown, label: string): string {
+  if (typeof value !== 'string' || !value.trim()) throw new Error(`${label} 不合法`)
+  return value
+}
+
+function decodeOption(value: unknown): DesignerOption {
+  const source = requireRecord(value, '动态选项')
+  const optionValue = source.value
+  if (
+    typeof optionValue !== 'string' &&
+    typeof optionValue !== 'number' &&
+    typeof optionValue !== 'boolean'
+  ) {
+    throw new Error('动态选项 value 不合法')
+  }
+  const label =
+    typeof source.label === 'string' && source.label.trim() ? source.label : String(optionValue)
+  const children = Array.isArray(source.children) ? source.children.map(decodeOption) : undefined
+  return {
+    label,
+    value: optionValue,
+    disabled: source.disabled === true,
+    ...(children ? { children } : {}),
+  }
+}
+
+function readFileMetadata(
+  context: FormRuntimeAdapterContext,
+  assetId: string,
+): FormAssetReference | undefined {
+  const raw = context.extension?.fileMetadata
+  if (!Array.isArray(raw) && (typeof raw !== 'object' || raw === null)) return undefined
+  const items = Array.isArray(raw)
+    ? raw
+    : Object.values(raw as Record<string, unknown>).flatMap((item) =>
+        Array.isArray(item) ? item : [item],
+      )
+  for (const item of items) {
+    if (typeof item !== 'object' || item === null) continue
+    const source = item as Record<string, unknown>
+    const id =
+      (typeof source.fileId === 'string' && source.fileId) ||
+      (typeof source.assetId === 'string' && source.assetId) ||
+      ''
+    if (id !== assetId) continue
+    return {
+      assetId: id,
+      name: typeof source.name === 'string' ? source.name : id,
+      size: typeof source.sizeBytes === 'number' ? source.sizeBytes : 0,
+      contentType: typeof source.contentType === 'string' ? source.contentType : undefined,
+    }
+  }
+  return undefined
 }
 
 function requireContextText(

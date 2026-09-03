@@ -1,4 +1,4 @@
-import type { FormRuntimeAdapterContext } from '@daxiangme/form-core'
+import type { FormRuntimeAdapterContext, FormRuntimeAdapters } from '@daxiangme/form-core'
 
 /** 由宿主实现的最小传输请求；Adapter 不创建 HTTP 客户端，也不保存认证信息。 */
 export interface FormTransportRequest {
@@ -29,6 +29,8 @@ export interface CreateDxBpmFormAdapterOptions {
   context: FormRuntimeAdapterContext
   navigateResource?: (resourceCode: string, openInNewPage: boolean) => Promise<void>
   confirmOverwrite?: (message: string) => Promise<boolean>
+  /** 由宿主补齐目录、扫码、定位、数据源等包内尚未内置的端口。 */
+  extras?: FormRuntimeAdapters
 }
 
 /** 本地预览 Adapter 的交互选项。 */
