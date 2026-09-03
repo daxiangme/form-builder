@@ -11,7 +11,8 @@ Form Builder 是面向 Vue 3 与 Element Plus 的开源可视化低代码表单�
 - 主表单、弹窗、抽屉、响应式栅格、行子表和块子表。
 - 状态条件、公式计算、字段联动、验证规则与声明式事件流。
 - Element Plus 控件、浅色/深色主题和受控圆角样式。
-- 文件、数据源、远程验证、OCR、扫码、定位、导航与宿主动作 Adapter 端口。
+- 文件、数据源、远程验证、OCR、扫码、定位、导航、动态选项、日期范围、验证码、个人签名、地区级联与宿主动作 Adapter 端口。
+- 运行模式 `CREATE` / `EDIT` / `READ_ONLY` / `DETAIL`，以及按字段 ID 生效的 `fieldAccess`。
 - 现代 ESM、完整 TypeScript 类型声明和独立 CSS 产物。
 
 ![Form Builder 设计器总览](https://raw.githubusercontent.com/daxiangme/form-builder/v0.1.1/docs/assets/screenshots/designer-overview.png)
@@ -66,6 +67,7 @@ import {
 } from '@daxiangme/form-vue'
 
 const document = ref<DesignerDocument>(createDemoDesignerDocument('purchase-application'))
+const catalogs = undefined
 
 function handleSave(nextDocument: DesignerDocument) {
   document.value = nextDocument
@@ -74,7 +76,7 @@ function handleSave(nextDocument: DesignerDocument) {
 
 <template>
   <div class="designer-host">
-    <FormDesigner v-model="document" @save-request="handleSave" />
+    <FormDesigner v-model="document" :catalogs="catalogs" @save-request="handleSave" />
   </div>
 </template>
 
@@ -97,10 +99,12 @@ import {
   createDemoDesignerDocument,
   type DesignerRuntimeValueStore,
   type DesignerSubmissionProjection,
+  type FormFieldAccessMap,
 } from '@daxiangme/form-vue'
 
 const document = createDemoDesignerDocument('purchase-application')
 const value = ref<DesignerRuntimeValueStore>({ fields: {}, collections: {} })
+const fieldAccess: FormFieldAccessMap = {}
 
 function handleSubmit(projection: DesignerSubmissionProjection) {
   // 将稳定提交投影交给你的业务接口。
@@ -109,7 +113,13 @@ function handleSubmit(projection: DesignerSubmissionProjection) {
 </script>
 
 <template>
-  <FormRenderer v-model="value" :document="document" mode="CREATE" @submit="handleSubmit" />
+  <FormRenderer
+    v-model="value"
+    :document="document"
+    mode="CREATE"
+    :field-access="fieldAccess"
+    @submit="handleSubmit"
+  />
 </template>
 ```
 
