@@ -48,6 +48,10 @@ body,
   width: 150px;
 }
 
+.playground-toolbar .playground-policy {
+  width: 240px;
+}
+
 .playground-workspace {
   min-width: 0;
   min-height: 0;

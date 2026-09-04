@@ -460,17 +460,7 @@
               />
             </ElFormItem>
             <ElFormItem label="数据模型来源">
-              <div class="designer-inspector__source-wrap">
-                <ElTooltip :content="dataModelSourceLabel" placement="top-start">
-                  <ElTag
-                    class="designer-inspector__source-tag"
-                    effect="plain"
-                    :type="document.dataSchema.source ? 'success' : 'info'"
-                  >
-                    {{ dataModelSourceLabel }}
-                  </ElTag>
-                </ElTooltip>
-              </div>
+              <DesignerDataModelSourceIdentity :source="document.dataSchema.source" />
             </ElFormItem>
             <ElDivider content-position="left">标签</ElDivider>
             <ElFormItem label="默认位置">
@@ -714,6 +704,7 @@ import type {
 } from '@daxiangme/form-core'
 import DesignerFieldDefaultValueEditor from './DesignerFieldDefaultValueEditor.vue'
 import DesignerPropertyEditorHost from './DesignerPropertyEditorHost.vue'
+import DesignerDataModelSourceIdentity from './DesignerDataModelSourceIdentity.vue'
 
 defineOptions({ name: 'DesignerInspector' })
 
@@ -887,12 +878,6 @@ const selectedRelation = computed<DesignerOneToManyRelation | undefined>(() => {
   const relationCode =
     typeof node.configuration.relationCode === 'string' ? node.configuration.relationCode : ''
   return props.document.dataSchema.relations.find((relation) => relation.code === relationCode)
-})
-const dataModelSourceLabel = computed(() => {
-  const source = props.document.dataSchema.source
-  if (!source) return '本地语义模型'
-  const revision = source.sourceRevision === undefined ? '' : ` · r${source.sourceRevision}`
-  return `${source.provider} · ${source.sourceId}${revision}`
 })
 const propertySections = computed(() => {
   const definitions = registration.value?.properties ?? []
@@ -1262,45 +1247,6 @@ async function jumpToSection(name: string): Promise<void> {
 .designer-inspector :deep(.el-form-item__content) {
   width: 100%;
   min-width: 0;
-}
-
-.designer-inspector__source-wrap {
-  display: block;
-  width: 100%;
-  min-width: 0;
-}
-
-.designer-inspector__source-wrap :deep(.el-tooltip__trigger) {
-  display: block;
-  width: 100%;
-  min-width: 0;
-  max-width: 100%;
-}
-
-.designer-inspector__source-tag {
-  display: flex;
-  box-sizing: border-box;
-  width: 100%;
-  max-width: 100%;
-  height: auto;
-  min-height: 24px;
-  align-items: flex-start;
-  white-space: normal;
-  overflow-wrap: anywhere;
-  word-break: break-all;
-  line-height: 18px;
-  cursor: text;
-  user-select: text;
-}
-
-.designer-inspector__source-tag :deep(.el-tag__content) {
-  display: block;
-  width: 100%;
-  min-width: 0;
-  overflow-wrap: inherit;
-  word-break: inherit;
-  white-space: inherit;
-  user-select: text;
 }
 
 .designer-inspector :deep(.el-collapse-item__header) {

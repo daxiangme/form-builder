@@ -22,7 +22,13 @@ export default defineConfig({
       cssFileName: 'style',
     },
     rollupOptions: {
-      external: ['vue', 'element-plus', '@daxiangme/form-core', /^element-plus\//],
+      external: [
+        'vue',
+        'element-plus',
+        '@daxiangme/form-core',
+        '@daxiangme/form-adapter',
+        /^element-plus\//,
+      ],
     },
     sourcemap: true,
     emptyOutDir: true,

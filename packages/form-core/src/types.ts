@@ -30,11 +30,19 @@ export type DesignerRuntimeMode = 'DESIGN' | 'CREATE' | 'EDIT' | 'READ_ONLY' | '
 /** 设计文档字段的稳定身份。 */
 export type DesignerFieldId = string
 
-/** 服务端下发的字段访问级别。 */
-export type FormFieldAccessLevel = 'HIDDEN' | 'READ_ONLY' | 'EDITABLE' | 'REQUIRED'
+/** 服务端下发的字段访问级别；必填不再编码为访问级别。 */
+export type FormFieldAccessLevel = 'HIDDEN' | 'READ_ONLY' | 'EDITABLE'
 
-/** 以字段 ID 为键的运行权限投影。 */
-export type FormFieldAccessMap = Record<DesignerFieldId, FormFieldAccessLevel>
+/** 单个字段的运行策略：访问级别与独立必填标志。 */
+export interface FormFieldRuntimePolicy {
+  /** 三态访问级别。 */
+  accessLevel: FormFieldAccessLevel
+  /** 仅 EDITABLE 时生效的独立必填标志；不是第四种访问级别。 */
+  required?: boolean
+}
+
+/** 以字段 ID 为键的完整运行策略投影。 */
+export type FormFieldRuntimePolicyMap = Record<DesignerFieldId, FormFieldRuntimePolicy>
 
 /** 设计器当前设备。移动端只复用同一份 Schema。 */
 export type DesignerDevice = 'desktop' | 'mobile'
@@ -740,6 +748,8 @@ export interface DesignerResolvedFieldState {
   visible: boolean
   required: boolean
   disabled: boolean
+  /** 宿主访问级别；未传运行策略时为空，提交投影据此区分宿主只读与文档只读。 */
+  accessLevel?: FormFieldAccessLevel
 }
 
 /** 单条运行验证结果。 */

@@ -210,6 +210,8 @@ const props = withDefaults(
     pageSize?: number
     initialRows?: number
     defaultValues?: Readonly<Record<string, unknown>>
+    /** 宿主策略允许行增删复制时为 true；无策略时由运行模式决定。 */
+    rowWritable?: boolean
   }>(),
   {
     device: 'desktop',
@@ -222,6 +224,7 @@ const props = withDefaults(
     pageSize: 10,
     initialRows: 0,
     defaultValues: () => ({}),
+    rowWritable: true,
   },
 )
 
@@ -233,7 +236,9 @@ defineSlots<{
 const emit = defineEmits<{ 'update:modelValue': [rows: DesignerSubtableRow[]] }>()
 const currentPage = ref(1)
 const initialized = ref(false)
-const editable = computed(() => props.mode === 'CREATE' || props.mode === 'EDIT')
+const editable = computed(
+  () => props.rowWritable && (props.mode === 'CREATE' || props.mode === 'EDIT'),
+)
 const canCreate = computed(() => editable.value && props.allowCreate)
 const showActions = computed(() => editable.value && (props.allowCopy || props.allowDelete))
 const normalizedPageSize = computed(() => normalizeInteger(props.pageSize, 1, 100, 10))

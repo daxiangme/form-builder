@@ -207,6 +207,8 @@ const props = withDefaults(
     initialRows?: number
     defaultValues?: Readonly<Record<string, unknown>>
     deepEditMode?: 'INLINE' | 'DIALOG' | 'DRAWER' | string
+    /** 宿主策略允许行增删复制时为 true；无策略时由运行模式决定。 */
+    rowWritable?: boolean
   }>(),
   {
     device: 'desktop',
@@ -217,6 +219,7 @@ const props = withDefaults(
     initialRows: 0,
     defaultValues: () => ({}),
     deepEditMode: 'INLINE',
+    rowWritable: true,
   },
 )
 
@@ -230,7 +233,9 @@ const initialized = ref(false)
 const editorVisible = ref(false)
 const editorDraft = ref<DesignerSubtableRow>()
 const editorSourceRowId = ref('')
-const editable = computed(() => props.mode === 'CREATE' || props.mode === 'EDIT')
+const editable = computed(
+  () => props.rowWritable && (props.mode === 'CREATE' || props.mode === 'EDIT'),
+)
 const canCreate = computed(() => editable.value && props.allowCreate)
 const normalizedInitialRows = computed(() => normalizeInteger(props.initialRows, 0, 20, 0))
 const normalizedEditMode = computed<'INLINE' | 'DIALOG'>(() =>

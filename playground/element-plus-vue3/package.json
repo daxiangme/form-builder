@@ -9,9 +9,7 @@
     "typecheck": "vue-tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@daxiangme/form-adapter": "workspace:*",
-    "@daxiangme/form-core": "workspace:*",
-    "@daxiangme/form-vue": "workspace:*",
+    "el-form-gen": "workspace:*",
     "element-plus": "^2.11.2",
     "vue": "^3.5.21"
   }

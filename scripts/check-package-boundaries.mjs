@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 
 const workspaceRoot = fileURLToPath(new URL('..', import.meta.url))
 const requireFromFormVue = createRequire(
-  new URL('../packages/form-vue/package.json', import.meta.url),
+  new URL('../packages/el-form-gen/package.json', import.meta.url),
 )
 const remixIconCollection = requireFromFormVue('@iconify-json/ri').icons
 const checks = [
@@ -26,14 +26,14 @@ const checks = [
     ],
   },
   {
-    directory: 'packages/form-vue/src',
+    directory: 'packages/el-form-gen/src',
     forbidden: [
-      [/@\//u, 'form-vue 不得使用宿主源码别名'],
-      [/--dx-/u, 'form-vue 不得依赖 DX BPM 主题 Token'],
-      [/agilebpm|dstz/u, 'form-vue 不得复用旧工程运行命名'],
+      [/@\//u, 'el-form-gen 不得使用宿主源码别名'],
+      [/--dx-/u, 'el-form-gen 不得依赖 DX BPM 主题 Token'],
+      [/agilebpm|dstz/u, 'el-form-gen 不得复用旧工程运行命名'],
     ],
   },
-  ...['form-core', 'form-adapter', 'form-vue'].map((packageName) => ({
+  ...['form-core', 'form-adapter', 'el-form-gen'].map((packageName) => ({
     directory: `packages/${packageName}/dist`,
     forbidden: [
       [/@\//u, '发布产物不得保留宿主源码别名'],
@@ -54,7 +54,7 @@ for (const check of checks) {
   }
 }
 
-for (const directory of ['packages/form-core/src', 'packages/form-vue/src']) {
+for (const directory of ['packages/form-core/src', 'packages/el-form-gen/src']) {
   const files = await collectSourceFiles(join(workspaceRoot, directory))
   for (const file of files) {
     const source = await readFile(file, 'utf8')

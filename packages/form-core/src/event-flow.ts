@@ -1,5 +1,9 @@
 import { evaluateDesignerCondition, evaluateDesignerExpression } from './expression'
-import { DESIGNER_WRITE_EVENT_ACTIONS, isDesignerRuntimeWriteBlocked } from './field-access'
+import {
+  DESIGNER_WRITE_EVENT_ACTIONS,
+  isDesignerFieldTargetedWriteAction,
+  isDesignerRuntimeWriteBlocked,
+} from './field-access'
 import type {
   DesignerDataSourceDefinition,
   DesignerDocument,
@@ -33,6 +37,12 @@ export interface DesignerEventRuntimeHost {
   openModule?: (moduleCode: string) => void
   confirmModule?: (moduleCode: string) => void
   cancelModule?: (moduleCode: string) => void
+  /**
+   * 判断目标字段是否允许事件写入。
+   *
+   * 未提供时仅按运行模式拦截写动作；提供后 HIDDEN / READ_ONLY 字段的赋值类动作失败关闭。
+   */
+  isFieldWritable?: (fieldId: string) => boolean
 }
 
 /** 事件流执行结果。 */
@@ -130,6 +140,13 @@ async function executeAction(
   ) {
     throw new Error('只读或详情模式不允许执行写动作')
   }
+  if (isDesignerFieldTargetedWriteAction(step.actionType)) {
+    const targetFieldId =
+      step.actionType === 'COPY_FIELD'
+        ? requiredText(step.configuration.targetFieldId, '目标字段')
+        : requiredText(step.configuration.fieldId, '目标字段')
+    assertFieldWritable(host, targetFieldId)
+  }
   const configuration = step.configuration
   if (step.actionType === 'SET_FIELD') {
     const fieldId = requiredText(configuration.fieldId, '目标字段')
@@ -208,6 +225,11 @@ async function executeAction(
     const output = await adapter.execute(definition, resolveMappedInput(definition, runtime))
     for (const mapping of definition.outputMappings) {
       if (mapping.target.startsWith('field:')) {
+        assertFieldWritable(host, mapping.target.slice('field:'.length))
+      }
+    }
+    for (const mapping of definition.outputMappings) {
+      if (mapping.target.startsWith('field:')) {
         assignFieldValue(
           host,
           mapping.target.slice('field:'.length),
@@ -228,6 +250,12 @@ async function executeAction(
       fields: cloneValue(host.valueStore.fields),
       variables: cloneValue(host.variables),
     })
+  }
+}
+
+function assertFieldWritable(host: DesignerEventRuntimeHost, fieldId: string): void {
+  if (host.isFieldWritable && !host.isFieldWritable(fieldId)) {
+    throw new Error('当前字段权限不允许事件流写入')
   }
 }
 

@@ -166,6 +166,7 @@
         :page-size="numberConfiguration('pageSize') || 10"
         :initial-rows="numberConfiguration('initialRows')"
         :default-values="subtableDefaultValues"
+        :row-writable="subtableRowWritable"
         @update:model-value="updateSubtableRows"
       >
         <template #cell="{ column, value, update, row }">
@@ -223,6 +224,7 @@
         :initial-rows="numberConfiguration('initialRows')"
         :deep-edit-mode="textConfiguration('deepEditMode') || 'INLINE'"
         :default-values="subtableDefaultValues"
+        :row-writable="subtableRowWritable"
         @update:model-value="updateSubtableRows"
       >
         <template #field="{ column, value, update, row }">
@@ -318,6 +320,7 @@ import {
   resolveDesignerContainerAppearance,
 } from '@daxiangme/form-core'
 import { createDesignerFieldFeedbackKey } from '@daxiangme/form-core'
+import { isDesignerFieldUserWritable, isDesignerRuntimeWriteBlocked } from '@daxiangme/form-core'
 import { projectDesignerSubtableColumns } from '@daxiangme/form-core'
 import type {
   DesignerAppearance,
@@ -524,9 +527,22 @@ watchEffect(() => {
   const fallbackIndex = Math.min(lastActiveSlotIndex.value, props.node.slots.length - 1)
   activeSlot.value = props.node.slots[fallbackIndex]?.slotCode ?? ''
 })
-const subtableColumns = computed(() =>
-  container.value ? projectDesignerSubtableColumns(container.value, props.fields) : [],
-)
+const subtableColumns = computed(() => {
+  const columns = container.value
+    ? projectDesignerSubtableColumns(container.value, props.fields)
+    : []
+  return columns.filter((column) => props.fieldStates[column.fieldId]?.visible !== false)
+})
+const subtableRowWritable = computed(() => {
+  if (isDesignerRuntimeWriteBlocked(props.mode)) return false
+  if (subtableColumns.value.length === 0) return props.mode === 'CREATE' || props.mode === 'EDIT'
+  return subtableColumns.value.some((column) =>
+    isDesignerFieldUserWritable({
+      mode: props.mode,
+      accessLevel: props.fieldStates[column.fieldId]?.accessLevel,
+    }),
+  )
+})
 const subtableRows = computed(() =>
   container.value ? (props.valueStore.collections[container.value.id] ?? []) : [],
 )
@@ -589,6 +605,15 @@ function updateSubtableField(
   update: (value: unknown) => void,
   containerId: string,
 ): void {
+  if (
+    !isDesignerFieldUserWritable({
+      mode: props.mode,
+      accessLevel: props.fieldStates[column.fieldId]?.accessLevel,
+    })
+  ) {
+    emit('runtime-warning', '当前字段权限不允许子表写入')
+    return
+  }
   update(value)
   emitComponentEvent(column.columnId, 'CHANGE', row, containerId)
 }

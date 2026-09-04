@@ -1,13 +1,9 @@
 # @daxiangme/form-core
 
-纯 TypeScript 的 DX Form 文档、布局、行为、诊断、事件与运行端口。
-
-```bash
-pnpm add @daxiangme/form-core
-```
+`el-form-gen` 的内部文档、布局、行为、诊断、事件与运行端口模块。普通 Vue 应用请安装 [`el-form-gen`](https://www.npmjs.com/package/el-form-gen)，不必单独导入本包。
 
 ```ts
-import { createEmptyDesignerDocument, decodeDesignerDocument } from '@daxiangme/form-core'
+import { createEmptyDesignerDocument, decodeDesignerDocument } from 'el-form-gen'
 
 const document = createEmptyDesignerDocument('expense-form', '费用申请')
 const decoded = decodeDesignerDocument(document)

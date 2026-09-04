@@ -7,9 +7,10 @@ import type {
 } from './types'
 
 /**
- * 根据表单策略、字段覆盖和最终运行状态生成提交投影。
+ * 根据表单策略、字段覆盖、宿主运行策略和最终运行状态生成提交投影。
  *
- * 技术隐藏字段始终保留；其他字段的 EXCLUDE 优先于全局策略。该函数只返回新对象，不修改预览值仓库。
+ * 技术隐藏字段始终保留；宿主 HIDDEN / READ_ONLY 不进入用户提交。其他字段的 EXCLUDE 优先于全局策略。
+ * 该函数只返回新对象，不修改预览值仓库。
  */
 export function projectDesignerSubmission(
   document: DesignerDocument,
@@ -25,11 +26,13 @@ export function projectDesignerSubmission(
   for (const field of document.dataSchema.fields) {
     const technicalHidden = field.componentType === 'hidden'
     const state = fieldStates[field.id]
+    const hostBlocked = state?.accessLevel === 'HIDDEN' || state?.accessLevel === 'READ_ONLY'
     const hidden = state ? !state.visible : field.display.hidden
     const behavior = field.behavior.submitBehavior
     const excluded = technicalHidden
       ? false
-      : behavior === 'EXCLUDE' ||
+      : hostBlocked ||
+        behavior === 'EXCLUDE' ||
         (behavior !== 'INCLUDE' && document.submitPolicy.ignoreHiddenFields && hidden)
     if (excluded) excludedFieldIds.push(field.id)
     else includedFieldIds.add(field.id)

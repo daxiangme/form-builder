@@ -1,8 +1,5 @@
 import { findDesignerComponent } from './component-registry'
-import {
-  isDesignerRadiusValue,
-  normalizeDesignerRadiusValue,
-} from './radius'
+import { isDesignerRadiusValue, normalizeDesignerRadiusValue } from './radius'
 import { diagnoseDesignerExpression, resolveDesignerFieldEvaluationOrder } from './expression'
 import { isSafeDesignerRegularExpression } from './validation'
 import type {
@@ -555,7 +552,9 @@ function diagnoseOverlays(document: DesignerDocument, result: DesignerDiagnostic
     )
       result.push(error('OVERLAY_WIDTH', '模块宽度必须为 320～1200', `${path}.width`))
     if (!isDesignerRadiusValue(overlay.radius)) {
-      result.push(error('OVERLAY_RADIUS', '弹窗圆角必须是跟随系统或 0～32 的 4 的倍数像素', `${path}.radius`))
+      result.push(
+        error('OVERLAY_RADIUS', '弹窗圆角必须是跟随系统或 0～32 的 4 的倍数像素', `${path}.radius`),
+      )
     }
     if (
       !['COMPACT', 'STANDARD', 'SPACIOUS', 'VIEWPORT'].includes(String(overlay.maxHeightPreset))

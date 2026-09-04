@@ -73,6 +73,8 @@ export async function applyDesignerValueRules(
     phase?: 'INITIALIZE' | 'CHANGE'
     changedFieldIds?: Iterable<string>
     confirmationAdapter?: DesignerLinkageConfirmationAdapter
+    /** 联动写入必须遵守宿主权限；公式计算可以刷新只读展示。 */
+    isHostWritable?: (fieldId: string) => boolean
   } = {},
 ): Promise<string[]> {
   const { orderedFields, diagnostics } = resolveDesignerFieldEvaluationOrder(document)
@@ -84,6 +86,8 @@ export async function applyDesignerValueRules(
     if (field.entityCode !== document.dataSchema.rootEntity.code) continue
     for (const rule of field.behavior.valueRules) {
       if (!shouldExecuteValueRule(rule, phase, dirtyFieldIds)) continue
+      if (rule.mode === 'LINKAGE' && options.isHostWritable && !options.isHostWritable(field.id))
+        continue
       const context: DesignerExpressionRuntimeContext = { ...runtime, fields: valueStore.fields }
       if (rule.condition && !evaluateDesignerCondition(rule.condition, context)) continue
       try {
@@ -123,6 +127,8 @@ export async function applyDesignerCurrentRowValueRules(
     phase?: 'INITIALIZE' | 'CHANGE'
     changedFieldIds?: Iterable<string>
     confirmationAdapter?: DesignerLinkageConfirmationAdapter
+    /** 联动写入必须遵守宿主权限；公式计算可以刷新只读展示。 */
+    isHostWritable?: (fieldId: string) => boolean
   } = {},
 ): Promise<string[]> {
   const { orderedFields, diagnostics } = resolveDesignerFieldEvaluationOrder(document)
@@ -134,6 +140,8 @@ export async function applyDesignerCurrentRowValueRules(
     if (field.entityCode !== entityCode) continue
     for (const rule of field.behavior.valueRules) {
       if (!shouldExecuteValueRule(rule, phase, dirtyFieldIds)) continue
+      if (rule.mode === 'LINKAGE' && options.isHostWritable && !options.isHostWritable(field.id))
+        continue
       const context: DesignerExpressionRuntimeContext = { ...runtime, currentRow: rowValues }
       if (rule.condition && !evaluateDesignerCondition(rule.condition, context)) continue
       try {

@@ -387,7 +387,7 @@ import DesignerPalette from './workbench/DesignerPalette.vue'
 import DesignerQuickGridEditor from './workbench/DesignerQuickGridEditor.vue'
 import DesignerSchemaInspector from './workbench/DesignerSchemaInspector.vue'
 
-defineOptions({ name: 'FormDesigner' })
+defineOptions({ name: 'ElFormDesigner' })
 
 const props = defineProps<{
   modelValue: DesignerDocument

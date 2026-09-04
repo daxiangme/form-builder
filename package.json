@@ -2,7 +2,7 @@
   "name": "form-builder-workspace",
   "version": "0.1.3",
   "private": true,
-  "description": "Visual form designer and schema-driven renderer for Vue 3 and Element Plus",
+  "description": "Visual form designer and runtime renderer for Vue 3 and Element Plus; Form Gen is not code generation",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -19,12 +19,12 @@
     "pnpm": ">=10.12.4"
   },
   "scripts": {
-    "build": "pnpm --filter @daxiangme/form-core build && pnpm --filter @daxiangme/form-adapter build && pnpm --filter @daxiangme/form-vue build && pnpm --filter @daxiangme/form-playground build",
+    "build": "pnpm --filter @daxiangme/form-core build && pnpm --filter @daxiangme/form-adapter build && pnpm --filter el-form-gen build && pnpm --filter @daxiangme/form-playground build",
     "check:boundaries": "node scripts/check-package-boundaries.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint packages playground --max-warnings=0",
-    "lint:style": "stylelint \"packages/form-vue/src/**/*.{css,scss,vue}\" \"playground/element-plus-vue3/src/**/*.{css,scss,vue}\"",
+    "lint:style": "stylelint \"packages/el-form-gen/src/**/*.{css,scss,vue}\" \"playground/element-plus-vue3/src/**/*.{css,scss,vue}\"",
     "typecheck": "pnpm -r typecheck",
     "verify": "pnpm format:check && pnpm lint && pnpm lint:style && pnpm check:boundaries && pnpm typecheck && pnpm build"
   },

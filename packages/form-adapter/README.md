@@ -1,13 +1,9 @@
 # @daxiangme/form-adapter
 
-DX Form 的本地预览和 DX BPM 宿主适配实现。传输生命周期由宿主提供，Adapter 不保存 Token，也不创建 Axios 实例。
-
-```bash
-pnpm add @daxiangme/form-core @daxiangme/form-adapter
-```
+`el-form-gen` 的内部本地预览和 DX BPM 宿主适配实现。普通 Vue 应用请从 [`el-form-gen`](https://www.npmjs.com/package/el-form-gen) 导入工厂函数。传输生命周期由宿主提供，Adapter 不保存 Token，也不创建 Axios 实例。
 
 ```ts
-import { createDxBpmFormAdapter } from '@daxiangme/form-adapter'
+import { createDxBpmFormAdapter, createLocalPreviewFormAdapter } from 'el-form-gen'
 
 const adapters = createDxBpmFormAdapter({
   transport: {

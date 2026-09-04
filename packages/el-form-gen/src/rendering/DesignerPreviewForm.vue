@@ -227,8 +227,9 @@ import {
   createDesignerFieldFeedbackKey,
   projectDesignerFieldFeedback,
   applyDesignerFieldAccess,
+  isDesignerFieldUserWritable,
   isDesignerRuntimeWriteBlocked,
-  readDesignerFieldAccess,
+  readDesignerFieldRuntimePolicy,
   resolveDesignerFieldState,
   validateDesignerField,
 } from '@daxiangme/form-core'
@@ -236,7 +237,6 @@ import type {
   DesignerActionBarButton,
   DesignerComponentEvent,
   DesignerContainerNode,
-  DesignerDevice,
   DesignerDocument,
   DesignerEventFlow,
   DesignerFieldFeedback,
@@ -244,44 +244,27 @@ import type {
   DesignerLayoutNode,
   DesignerOverlayModule,
   DesignerResolvedFieldState,
-  DesignerRuntimeAdapters,
   DesignerRuntimeMode,
   DesignerRuntimeValueStore,
   DesignerSubtableRow,
   DesignerValidationResult,
-  FormFieldAccessMap,
-  FormRuntimeAdapterContext,
   DesignerSubmissionProjection,
+  FormRuntimeAdapterContext,
 } from '@daxiangme/form-core'
 import DesignerRuntimeNode from './DesignerRuntimeNode.vue'
+import type { ElFormRendererProps } from './el-form-renderer-props'
 
-defineOptions({ name: 'FormRenderer' })
+defineOptions({ name: 'ElFormRenderer' })
 
-const props = withDefaults(
-  defineProps<{
-    document: DesignerDocument
-    modelValue?: DesignerRuntimeValueStore
-    mode?: Exclude<DesignerRuntimeMode, 'DESIGN'>
-    fieldAccess?: FormFieldAccessMap
-    device?: DesignerDevice
-    adapters?: DesignerRuntimeAdapters
-    adapterContext?: FormRuntimeAdapterContext
-    activeModule?: string
-    /** @deprecated 请使用 activeModule。 */
-    initialOverlayCode?: string
-    overlayOnly?: boolean
-    showToolbar?: boolean
-  }>(),
-  {
-    mode: 'CREATE',
-    device: 'desktop',
-    adapterContext: () => ({}),
-    activeModule: '',
-    initialOverlayCode: '',
-    overlayOnly: false,
-    showToolbar: false,
-  },
-)
+const props = withDefaults(defineProps<ElFormRendererProps>(), {
+  mode: 'CREATE',
+  device: 'desktop',
+  adapterContext: () => ({}),
+  activeModule: '',
+  initialOverlayCode: '',
+  overlayOnly: false,
+  showToolbar: false,
+})
 const emit = defineEmits<{
   'update:modelValue': [value: DesignerRuntimeValueStore]
   submit: [projection: DesignerSubmissionProjection]
@@ -459,7 +442,7 @@ function openInitialOverlay(moduleCode: string): void {
 
 /** 更新根表字段，执行受控计算规则；组件事件由渲染节点随后触发。 */
 async function updateFieldValue(fieldId: string, value: unknown): Promise<void> {
-  if (rejectWriteAction('字段写入')) return
+  if (rejectWriteAction('字段写入') || rejectFieldWrite(fieldId, '字段写入')) return
   valueStore.fields[fieldId] = value
   await applyValueRules(valueStore, 'CHANGE', [fieldId])
   await applyCollectionValueRules(valueStore, undefined, 'CHANGE', [fieldId])
@@ -468,7 +451,7 @@ async function updateFieldValue(fieldId: string, value: unknown): Promise<void> 
 
 /** 更新指定子表容器的多行值。 */
 function updateCollection(containerId: string, rows: DesignerSubtableRow[]): void {
-  if (rejectWriteAction('集合写入')) return
+  if (rejectWriteAction('集合写入') || rejectCollectionWrite(containerId, '集合写入')) return
   valueStore.collections[containerId] = rows
   void applyCollectionValueRules(valueStore, rows)
   emitRuntimeValue()
@@ -476,7 +459,12 @@ function updateCollection(containerId: string, rows: DesignerSubtableRow[]): voi
 
 /** 更新弹层草稿字段，不提前污染主体。 */
 async function updateOverlayFieldValue(fieldId: string, value: unknown): Promise<void> {
-  if (rejectWriteAction('模块字段写入') || !overlayValueStore.value) return
+  if (
+    rejectWriteAction('模块字段写入') ||
+    rejectFieldWrite(fieldId, '模块字段写入') ||
+    !overlayValueStore.value
+  )
+    return
   overlayValueStore.value.fields[fieldId] = value
   await applyValueRules(overlayValueStore.value, 'CHANGE', [fieldId])
   await applyCollectionValueRules(overlayValueStore.value, undefined, 'CHANGE', [fieldId])
@@ -484,7 +472,12 @@ async function updateOverlayFieldValue(fieldId: string, value: unknown): Promise
 
 /** 更新弹层草稿中的子表集合。 */
 function updateOverlayCollection(containerId: string, rows: DesignerSubtableRow[]): void {
-  if (rejectWriteAction('模块集合写入') || !overlayValueStore.value) return
+  if (
+    rejectWriteAction('模块集合写入') ||
+    rejectCollectionWrite(containerId, '模块集合写入') ||
+    !overlayValueStore.value
+  )
+    return
   overlayValueStore.value.collections[containerId] = rows
   void applyCollectionValueRules(overlayValueStore.value, rows)
 }
@@ -584,6 +577,7 @@ async function validateForm(): Promise<boolean> {
           'SUBMIT',
           { ...expressionContext.value, currentRow: row.values },
           {
+            state: fieldStates.value[field.id],
             remoteAdapter: props.adapters?.remoteValidation,
             collectionRows: validationCollectionRows(field.id),
           },
@@ -629,7 +623,7 @@ async function validateSingleField(
     trigger,
     { ...expressionContext.value, fields: store.fields, currentRow: currentRow?.values },
     {
-      state: resolveDesignerFieldState(field, expressionRuntime(store, currentRow)),
+      state: activeFieldStates()[field.id],
       remoteAdapter: props.adapters?.remoteValidation,
       collectionRows: validationCollectionRows(field.id),
     },
@@ -738,6 +732,7 @@ async function runFlow(
       },
       adapters: props.adapters,
       runtimeMode: modeModel.value,
+      isFieldWritable: (fieldId) => isFieldWritable(fieldId),
       validate: validateForm,
       submit: submitForm,
       reset: resetForm,
@@ -819,7 +814,7 @@ function resolveFieldStates(
       field.id,
       applyDesignerFieldAccess(field, resolveDesignerFieldState(field, expressionRuntime(store)), {
         mode: modeModel.value,
-        access: readDesignerFieldAccess(props.fieldAccess, field.id),
+        policy: readDesignerFieldRuntimePolicy(props.fieldRuntimePolicy, field.id),
       }),
     ]),
   )
@@ -835,6 +830,45 @@ function rejectWriteAction(action: string): boolean {
   if (!isDesignerRuntimeWriteBlocked(modeModel.value)) return false
   emit('runtime-warning', `只读或详情模式不允许${action}`)
   showRuntimeWarning(`只读或详情模式不允许${action}`)
+  return true
+}
+
+/** 当前运行副本下的字段最终状态。 */
+function activeFieldStates(): Record<string, DesignerResolvedFieldState> {
+  return overlayValueStore.value ? overlayFieldStates.value : fieldStates.value
+}
+
+/**
+ * 判断宿主运行策略是否允许用户写入该字段。
+ *
+ * @param fieldId 字段 ID
+ * @returns 允许写入时返回 true
+ */
+function isFieldWritable(fieldId: string): boolean {
+  return isDesignerFieldUserWritable({
+    mode: modeModel.value,
+    accessLevel: activeFieldStates()[fieldId]?.accessLevel,
+  })
+}
+
+function rejectFieldWrite(fieldId: string, action: string): boolean {
+  if (isFieldWritable(fieldId)) return false
+  emit('runtime-warning', `当前字段权限不允许${action}`)
+  showRuntimeWarning(`当前字段权限不允许${action}`)
+  return true
+}
+
+function rejectCollectionWrite(containerId: string, action: string): boolean {
+  const store = overlayValueStore.value ?? valueStore
+  const rows = store.collections[containerId]
+  const fieldIds = new Set<string>()
+  for (const field of props.document.dataSchema.fields) {
+    if (rows?.some((row) => field.id in row.values)) fieldIds.add(field.id)
+  }
+  if (fieldIds.size === 0) return false
+  if ([...fieldIds].some((fieldId) => isFieldWritable(fieldId))) return false
+  emit('runtime-warning', `当前字段权限不允许${action}`)
+  showRuntimeWarning(`当前字段权限不允许${action}`)
   return true
 }
 
@@ -861,7 +895,12 @@ async function applyValueRules(
       variables,
       context: expressionContext.value.context,
     },
-    { phase, changedFieldIds, confirmationAdapter: props.adapters?.linkageConfirmation },
+    {
+      phase,
+      changedFieldIds,
+      confirmationAdapter: props.adapters?.linkageConfirmation,
+      isHostWritable: isFieldWritable,
+    },
   )
   if (failures.length > 0) runtimeNotice.value = { type: 'error', message: failures[0]! }
 }
@@ -893,6 +932,7 @@ async function applyCurrentRowValueRules(
       phase,
       changedFieldIds,
       confirmationAdapter: props.adapters?.linkageConfirmation,
+      isHostWritable: isFieldWritable,
     },
   )
   if (failures.length > 0) runtimeNotice.value = { type: 'error', message: failures[0]! }
