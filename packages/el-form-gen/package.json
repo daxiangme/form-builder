@@ -1,6 +1,6 @@
 {
   "name": "el-form-gen",
-  "version": "0.1.5",
+  "version": "0.2.0",
   "description": "Vue 3 + Element Plus 可视化表单设计器与运行渲染器；Form Gen 包含设计与渲染，不表示代码生成",
   "type": "module",
   "license": "MIT",
@@ -46,8 +46,8 @@
     "pack:dry-run": "npm pack --dry-run"
   },
   "dependencies": {
-    "@daxiangme/form-adapter": "0.1.3",
-    "@daxiangme/form-core": "0.1.4",
+    "@daxiangme/form-adapter": "0.2.0",
+    "@daxiangme/form-core": "0.2.0",
     "@iconify-json/ri": "^1.2.5",
     "@iconify/vue": "^5.0.0",
     "dayjs": "^1.11.18",

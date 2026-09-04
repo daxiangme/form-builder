@@ -1,6 +1,6 @@
 {
   "name": "@daxiangme/form-core",
-  "version": "0.1.4",
+  "version": "0.2.0",
   "description": "DX Form 的纯 TypeScript 表单文档、规则与运行核心",
   "type": "module",
   "license": "MIT",
