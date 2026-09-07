@@ -205,7 +205,7 @@
       </div>
       <template v-for="slot in node.slots" :key="slot.id">
         <div
-          v-if="slot.children.length > 0"
+          v-if="subtableColumns(slot.slotCode).length > 0"
           class="designer-canvas-node__table-head"
           :style="tableColumnsStyle(slot.slotCode)"
         >
@@ -215,9 +215,9 @@
         </div>
         <VueDraggable
           class="designer-canvas-node__table-row"
-          :class="{ 'is-empty': slot.children.length === 0 }"
-          :style="slot.children.length > 0 ? tableColumnsStyle(slot.slotCode) : undefined"
-          :model-value="slot.children"
+          :class="{ 'is-empty': slotFieldChildren(slot).length === 0 }"
+          :style="slotFieldChildren(slot).length > 0 ? tableColumnsStyle(slot.slotCode) : undefined"
+          :model-value="slotFieldChildren(slot)"
           :group="sortableGroup"
           :animation="120"
           :disabled="device === 'mobile'"
@@ -232,18 +232,21 @@
           drag-class="designer-canvas-node--dragging"
           :data-container-id="node.id"
           :data-slot-code="slot.slotCode"
-          @update:model-value="updateSlotChildren(slot.slotCode, $event)"
+          @update:model-value="updateSlotFieldChildren(slot.slotCode, $event)"
           @start="emit('drag-start', $event)"
           @end="emit('drag-end')"
         >
-          <span v-if="slot.children.length === 0" class="designer-canvas-node__empty-hint">
+          <span
+            v-if="slotFieldChildren(slot).length === 0"
+            class="designer-canvas-node__empty-hint"
+          >
             拖入字段形成子表列
           </span>
           <DesignerCanvasNode
-            v-for="(child, index) in slot.children"
+            v-for="child in slotFieldChildren(slot)"
             :key="child.id"
             :node="child"
-            :item-index="index"
+            :item-index="slotChildIndex(slot, child.id)"
             :fields="fields"
             :selected-node-id="selectedNodeId"
             :device="device"
@@ -253,7 +256,7 @@
             :form-label-position="formLabelPosition"
             :form-label-width="formLabelWidth"
             :palette-drag-active="paletteDragActive"
-            :drop-target="slotDropTarget(slot.slotCode, index)"
+            :drop-target="slotDropTarget(slot.slotCode, slotChildIndex(slot, child.id))"
             :can-sort-move="canSortMove"
             table-cell
             @select="emit('select', $event)"
@@ -265,6 +268,62 @@
             @drag-end="emit('drag-end')"
           />
         </VueDraggable>
+        <div class="designer-canvas-node__nested">
+          <p class="designer-canvas-node__nested-caption">子关系 · 运行时在行展开区呈现</p>
+          <VueDraggable
+            class="designer-canvas-node__nested-list"
+            :class="{ 'is-empty': slotNestedChildren(slot).length === 0 }"
+            :model-value="slotNestedChildren(slot)"
+            :group="sortableGroup"
+            :animation="120"
+            :disabled="device === 'mobile'"
+            :empty-insert-threshold="sortableNestedEmptyInsertThreshold"
+            invert-swap
+            :swap-threshold="sortableSwapThreshold"
+            :on-move="canSortMove"
+            draggable=".designer-canvas-node"
+            handle=".designer-node-drag-handle"
+            ghost-class="designer-canvas-node--ghost"
+            chosen-class="designer-canvas-node--chosen"
+            drag-class="designer-canvas-node--dragging"
+            :data-container-id="node.id"
+            :data-slot-code="slot.slotCode"
+            @update:model-value="updateSlotNestedChildren(slot.slotCode, $event)"
+            @start="emit('drag-start', $event)"
+            @end="emit('drag-end')"
+          >
+            <span
+              v-if="slotNestedChildren(slot).length === 0"
+              class="designer-canvas-node__empty-hint"
+            >
+              放入嵌套子表或关联
+            </span>
+            <DesignerCanvasNode
+              v-for="child in slotNestedChildren(slot)"
+              :key="child.id"
+              :node="child"
+              :item-index="slotChildIndex(slot, child.id)"
+              :fields="fields"
+              :selected-node-id="selectedNodeId"
+              :device="device"
+              :gutter="gutter"
+              :appearance="appearance"
+              :grid-cell="slotCell(slot.slotCode, child.id)"
+              :form-label-position="formLabelPosition"
+              :form-label-width="formLabelWidth"
+              :palette-drag-active="paletteDragActive"
+              :drop-target="slotDropTarget(slot.slotCode, slotChildIndex(slot, child.id))"
+              :can-sort-move="canSortMove"
+              @select="emit('select', $event)"
+              @remove="emit('remove', $event)"
+              @duplicate="emit('duplicate', $event)"
+              @drop="forwardDrop"
+              @reorder="forwardReorder"
+              @drag-start="emit('drag-start', $event)"
+              @drag-end="emit('drag-end')"
+            />
+          </VueDraggable>
+        </div>
       </template>
     </div>
 
@@ -477,7 +536,9 @@ const tabsType = computed(() => {
 })
 const nodeGridStyle = computed<CSSProperties>(() =>
   props.tableCell
-    ? { gridColumn: 'auto', gridRow: '1' }
+    ? props.node.nodeType === 'CONTAINER'
+      ? { gridColumn: '1 / -1', gridRow: 'auto' }
+      : { gridColumn: 'auto', gridRow: '1' }
     : {
         gridColumn: `${props.gridCell.start + 1} / span ${props.gridCell.span}`,
         gridRow: `${props.gridCell.row + 1}`,
@@ -536,6 +597,58 @@ function resolveInsideDropTarget(): DesignerDropTarget | undefined {
 
 function updateSlotChildren(slotCode: string, children: DesignerLayoutNode[]): void {
   emit('reorder', props.node.id, slotCode, children)
+}
+
+function slotFieldChildren(slot: { children: DesignerLayoutNode[] }): DesignerLayoutNode[] {
+  return slot.children.filter((child) => child.nodeType === 'FIELD')
+}
+
+function slotNestedChildren(slot: { children: DesignerLayoutNode[] }): DesignerLayoutNode[] {
+  return slot.children.filter((child) => child.nodeType !== 'FIELD')
+}
+
+function slotChildIndex(slot: { children: DesignerLayoutNode[] }, nodeId: string): number {
+  const index = slot.children.findIndex((child) => child.id === nodeId)
+  return index >= 0 ? index : slot.children.length
+}
+
+function canonicalizeSlotChildren(
+  fields: DesignerLayoutNode[],
+  nested: DesignerLayoutNode[],
+): DesignerLayoutNode[] {
+  const seen = new Set<string>()
+  const merged: DesignerLayoutNode[] = []
+  for (const child of [...fields, ...nested]) {
+    if (seen.has(child.id)) continue
+    seen.add(child.id)
+    merged.push(child)
+  }
+  return [
+    ...merged.filter((child) => child.nodeType === 'FIELD'),
+    ...merged.filter((child) => child.nodeType !== 'FIELD'),
+  ]
+}
+
+function updateSlotFieldChildren(slotCode: string, children: DesignerLayoutNode[]): void {
+  if (props.node.nodeType !== 'CONTAINER') return
+  const slot = props.node.slots.find((item) => item.slotCode === slotCode)
+  if (!slot) return
+  const incomingIds = new Set(children.map((child) => child.id))
+  const nested = slot.children.filter(
+    (child) => child.nodeType !== 'FIELD' && !incomingIds.has(child.id),
+  )
+  updateSlotChildren(slotCode, canonicalizeSlotChildren(children, nested))
+}
+
+function updateSlotNestedChildren(slotCode: string, children: DesignerLayoutNode[]): void {
+  if (props.node.nodeType !== 'CONTAINER') return
+  const slot = props.node.slots.find((item) => item.slotCode === slotCode)
+  if (!slot) return
+  const incomingIds = new Set(children.map((child) => child.id))
+  const fields = slot.children.filter(
+    (child) => child.nodeType === 'FIELD' && !incomingIds.has(child.id),
+  )
+  updateSlotChildren(slotCode, canonicalizeSlotChildren(fields, children))
 }
 
 function forwardDrop(payload: string, target: DesignerDropTarget): void {
@@ -865,6 +978,32 @@ function normalizedTextAlign(value: string): 'left' | 'center' | 'right' | undef
 
 .designer-canvas-node__table-row > :deep(.designer-canvas-node:last-child) {
   border-right: 0;
+}
+
+.designer-canvas-node__nested {
+  min-width: 0;
+  margin-top: var(--daxiang-form-space-2);
+  padding: var(--daxiang-form-space-2);
+  background: var(--el-fill-color-extra-light);
+  border: 1px dashed var(--el-border-color-lighter);
+  border-radius: var(--el-border-radius-base);
+}
+
+.designer-canvas-node__nested-caption {
+  margin: 0 0 var(--daxiang-form-space-2);
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
+.designer-canvas-node__nested-list {
+  display: grid;
+  min-width: 0;
+  min-height: 44px;
+  gap: var(--daxiang-form-space-2);
+}
+
+.designer-canvas-node__nested-list.is-empty {
+  min-height: 88px;
 }
 
 .designer-canvas-node__block-index {

@@ -638,10 +638,7 @@ function addComponentAt(componentType: string, target: DesignerDropTarget): void
   let selectedId = ''
   engine.execute((document) => {
     mutateDesignerView(document, activeViewCode.value, (viewDocument) => {
-      const entityCode =
-        registration.nodeKind === 'FIELD'
-          ? resolveDesignerTargetEntityCode(viewDocument, target.containerId)
-          : undefined
+      const entityCode = resolveDesignerTargetEntityCode(viewDocument, target.containerId)
       const node = createNodeFromComponent(viewDocument, componentType, { entityCode })
       if (!node || !insertDesignerNode(viewDocument, node, target)) return
       selectedId = node.id
@@ -713,11 +710,11 @@ function selectField(fieldId: string): void {
   else leftTab.value = 'fields'
 }
 
-function restoreField(fieldId: string): void {
+function restoreField(fieldId: string, relationCode?: string): void {
   let nodeId = ''
   engine.execute((document) => {
     mutateDesignerView(document, activeViewCode.value, (viewDocument) => {
-      nodeId = restoreDesignerFieldNode(viewDocument, fieldId)?.id ?? ''
+      nodeId = restoreDesignerFieldNode(viewDocument, fieldId, relationCode)?.id ?? ''
     })
   })
   if (nodeId) engine.selectedNodeId.value = nodeId
@@ -729,13 +726,11 @@ function createRelationContainer(
   relationCode: string,
   componentType: 'row-subtable' | 'block-subtable',
 ): void {
-  if (activeViewCode.value !== DESIGNER_MAIN_VIEW_CODE) {
-    ElMessage.warning('一级子表关系只能放置在主表单主体')
-    return
-  }
   let nodeId = ''
   engine.execute((document) => {
-    nodeId = createDesignerRelationContainer(document, relationCode, componentType)?.id ?? ''
+    mutateDesignerView(document, activeViewCode.value, (viewDocument) => {
+      nodeId = createDesignerRelationContainer(viewDocument, relationCode, componentType)?.id ?? ''
+    })
   })
   if (!nodeId) {
     ElMessage.warning('当前关系不存在或已经放置')
@@ -746,10 +741,6 @@ function createRelationContainer(
 
 /** 将字段页选中的主字段和子关系作为一个命令生成布局。 */
 function generateDataModelLayout(request: DesignerGenerateLayoutRequest): void {
-  if (activeViewCode.value !== DESIGNER_MAIN_VIEW_CODE && request.relations.length > 0) {
-    ElMessage.warning('弹层模块只能生成当前实体字段，不能创建一级子表关系')
-    return
-  }
   let createdNodeIds: string[] = []
   let skippedFieldIds: string[] = []
   engine.execute((document) => {
@@ -958,12 +949,12 @@ function updateField(patch: Partial<DesignerField>): void {
   const fieldId = selectedField.value?.id
   if (!fieldId) return
   if (
-    patch.key &&
+    (patch.key || patch.entityCode) &&
     engine.document.value.dataSchema.fields.some(
       (field) =>
         field.id !== fieldId &&
-        field.entityCode === selectedField.value?.entityCode &&
-        field.key === patch.key,
+        field.entityCode === (patch.entityCode ?? selectedField.value?.entityCode) &&
+        field.key === (patch.key ?? selectedField.value?.key),
     )
   ) {
     ElMessage.warning('字段编码不能重复')
@@ -1219,6 +1210,7 @@ function normalizeModulePatch(
   ) {
     normalized.dataContext = patch.dataContext
   }
+  if (patch.contextEntityId !== undefined) normalized.contextEntityId = patch.contextEntityId
   if (patch.radius !== undefined && isDesignerRadiusValue(patch.radius)) {
     normalized.radius = patch.radius
   }

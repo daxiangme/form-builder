@@ -65,6 +65,22 @@
                     @update:model-value="updateField({ key: normalizeKey($event) })"
                   />
                 </ElFormItem>
+                <ElFormItem
+                  v-if="fieldEntityOptions.length > 1 && selectedField.bindingStatus === 'UNBOUND'"
+                  label="字段归属"
+                >
+                  <ElSelect
+                    :model-value="selectedField.entityCode"
+                    @update:model-value="updateField({ entityCode: $event })"
+                  >
+                    <ElOption
+                      v-for="entity in fieldEntityOptions"
+                      :key="entity.id"
+                      :label="entity.label"
+                      :value="entity.code"
+                    />
+                  </ElSelect>
+                </ElFormItem>
                 <ElFormItem label="语义类型">
                   <ElInput :model-value="selectedField.semanticType" disabled />
                 </ElFormItem>
@@ -165,10 +181,7 @@
                   />
                 </ElFormItem>
                 <ElFormItem label="父实体">
-                  <ElInput
-                    :model-value="`${document.dataSchema.rootEntity.name} · ${document.dataSchema.rootEntity.code}`"
-                    disabled
-                  />
+                  <ElInput :model-value="relationParentLabel" disabled />
                 </ElFormItem>
                 <ElFormItem label="子实体名称" required>
                   <ElInput
@@ -186,7 +199,13 @@
                 </ElFormItem>
                 <div class="designer-inspector__two-columns">
                   <ElFormItem label="关系类型">
-                    <ElInput model-value="一对多" disabled />
+                    <ElSelect
+                      :model-value="selectedRelation.kind"
+                      @update:model-value="changeRelationKind"
+                    >
+                      <ElOption label="一对多" value="ONE_TO_MANY" />
+                      <ElOption label="多对多关联" value="MANY_TO_MANY" />
+                    </ElSelect>
                   </ElFormItem>
                   <ElFormItem label="加载方式">
                     <ElInput
@@ -195,6 +214,22 @@
                     />
                   </ElFormItem>
                 </div>
+                <ElFormItem v-if="selectedRelation.kind === 'MANY_TO_MANY'" label="共享目标实体">
+                  <ElSelect
+                    :model-value="selectedRelation.targetEntity.id"
+                    @update:model-value="updateRelation({ targetEntityId: $event })"
+                  >
+                    <ElOption
+                      v-for="entity in document.dataSchema.entities.filter(
+                        (item) => item.id !== selectedRelation!.childEntity.id,
+                      )"
+                      :key="entity.id"
+                      :label="`${entity.name} · ${entity.code}`"
+                      :value="entity.id"
+                    />
+                  </ElSelect>
+                  <small>关联字段与共享目标字段独立授权；解除关联不会删除目标实体。</small>
+                </ElFormItem>
                 <ElTag effect="plain" :type="document.dataSchema.source ? 'success' : 'warning'">
                   {{
                     document.dataSchema.source
@@ -380,6 +415,21 @@
               >
                 <ElOption label="主表草稿" value="FORM_DRAFT" />
                 <ElOption label="当前子表行草稿" value="SUBTABLE_ROW_DRAFT" />
+              </ElSelect>
+            </ElFormItem>
+            <ElFormItem v-if="activeModule.dataContext === 'SUBTABLE_ROW_DRAFT'" label="行草稿实体">
+              <ElSelect
+                :model-value="activeModule.contextEntityId"
+                @update:model-value="
+                  emit('update-module', activeModule.code, { contextEntityId: $event })
+                "
+              >
+                <ElOption
+                  v-for="entity in document.dataSchema.entities"
+                  :key="entity.id"
+                  :label="`${entity.name} · ${entity.code}`"
+                  :value="entity.id"
+                />
               </ElSelect>
             </ElFormItem>
             <ElFormItem :label="activeModule.kind === 'DIALOG' ? '弹窗最大宽度' : '抽屉最大宽度'">
@@ -694,7 +744,7 @@ import type {
   DesignerDocument,
   DesignerField,
   DesignerLayoutNode,
-  DesignerOneToManyRelation,
+  DesignerRelation,
   DesignerOverlayMaxHeightPreset,
   DesignerOverlayModule,
   DesignerPropertyDefinition,
@@ -867,7 +917,7 @@ const selectedConfiguration = computed(
     props.selectedField?.configuration ??
     (props.selectedNode?.nodeType === 'CONTAINER' ? props.selectedNode.configuration : {}),
 )
-const selectedRelation = computed<DesignerOneToManyRelation | undefined>(() => {
+const selectedRelation = computed<DesignerRelation | undefined>(() => {
   const node = props.selectedNode
   if (
     node?.nodeType !== 'CONTAINER' ||
@@ -879,6 +929,58 @@ const selectedRelation = computed<DesignerOneToManyRelation | undefined>(() => {
     typeof node.configuration.relationCode === 'string' ? node.configuration.relationCode : ''
   return props.document.dataSchema.relations.find((relation) => relation.code === relationCode)
 })
+const relationParentLabel = computed(() => {
+  const parent = props.document.dataSchema.entities.find(
+    (entity) => entity.id === selectedRelation.value?.parentEntityId,
+  )
+  return parent ? `${parent.name} · ${parent.code}` : '未找到父实体'
+})
+const fieldEntityOptions = computed(() => {
+  const selectedId = props.selectedNode?.id
+  const visit = (
+    nodes: DesignerLayoutNode[],
+    relation?: DesignerRelation,
+  ): DesignerRelation | undefined => {
+    for (const node of nodes) {
+      if (node.id === selectedId) return relation
+      if (node.nodeType !== 'CONTAINER') continue
+      const next =
+        props.document.dataSchema.relations.find(
+          (item) => item.code === node.configuration.relationCode,
+        ) ?? relation
+      for (const slot of node.slots) {
+        const found = visit(slot.children, next)
+        if (found) return found
+      }
+    }
+    return undefined
+  }
+  const relation = [
+    props.document.uiSchema.root,
+    ...props.document.uiSchema.overlays.map((overlay) => overlay.root),
+  ]
+    .map((root) => visit(root))
+    .find(Boolean)
+  return relation?.kind === 'MANY_TO_MANY'
+    ? [
+        { ...relation.childEntity, label: `关联字段 · ${relation.childEntity.name}` },
+        { ...relation.targetEntity, label: `共享实体字段 · ${relation.targetEntity.name}` },
+      ]
+    : []
+})
+
+function changeRelationKind(kind: DesignerRelation['kind']): void {
+  const relation = selectedRelation.value
+  if (!relation || relation.kind === kind) return
+  if (kind === 'ONE_TO_MANY') {
+    updateRelation({ kind })
+    return
+  }
+  let serial = 1
+  while (props.document.dataSchema.entities.some((entity) => entity.code === `shared_${serial}`))
+    serial += 1
+  updateRelation({ kind, createTargetEntity: { name: '共享目标', code: `shared_${serial}` } })
+}
 const propertySections = computed(() => {
   const definitions = registration.value?.properties ?? []
   const labels: Record<DesignerPropertyDefinition['section'], string> = {

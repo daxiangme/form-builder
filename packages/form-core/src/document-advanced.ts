@@ -525,7 +525,18 @@ function diagnoseOverlays(document: DesignerDocument, result: DesignerDiagnostic
     if (!isRecord(overlay)) return void result.push(error('OVERLAY', '弹层模块必须是对象', path))
     unknownKeys(
       overlay,
-      ['id', 'code', 'name', 'kind', 'dataContext', 'width', 'radius', 'maxHeightPreset', 'root'],
+      [
+        'id',
+        'code',
+        'name',
+        'kind',
+        'dataContext',
+        'contextEntityId',
+        'width',
+        'radius',
+        'maxHeightPreset',
+        'root',
+      ],
       path,
       'OVERLAY_UNKNOWN_PROPERTY',
       result,
@@ -544,6 +555,13 @@ function diagnoseOverlays(document: DesignerDocument, result: DesignerDiagnostic
       result.push(error('OVERLAY_KIND', '模块类型不正确', `${path}.kind`))
     if (!['FORM_DRAFT', 'SUBTABLE_ROW_DRAFT'].includes(String(overlay.dataContext)))
       result.push(error('OVERLAY_CONTEXT', '模块数据上下文不正确', `${path}.dataContext`))
+    if (
+      overlay.contextEntityId !== undefined &&
+      !document.dataSchema.entities.some((entity) => entity.id === overlay.contextEntityId)
+    )
+      result.push(
+        error('OVERLAY_ENTITY_CONTEXT', '模块实体上下文不存在', `${path}.contextEntityId`),
+      )
     if (
       typeof overlay.width !== 'number' ||
       !Number.isFinite(overlay.width) ||
@@ -666,6 +684,7 @@ function diagnoseStateRules(
     result.push(
       ...diagnoseDesignerExpression(rule.condition, document, `${itemPath}.condition`, {
         allowCurrentRow,
+        currentEntityCode: expressionEntityCode(document, path),
       }),
     )
   })
@@ -702,12 +721,14 @@ function diagnoseValueRules(
     result.push(
       ...diagnoseDesignerExpression(rule.expression, document, `${itemPath}.expression`, {
         allowCurrentRow,
+        currentEntityCode: expressionEntityCode(document, path),
       }),
     )
     if (rule.condition !== undefined)
       result.push(
         ...diagnoseDesignerExpression(rule.condition, document, `${itemPath}.condition`, {
           allowCurrentRow,
+          currentEntityCode: expressionEntityCode(document, path),
         }),
       )
   })
@@ -775,6 +796,7 @@ function diagnoseValidationRules(
       result.push(
         ...diagnoseDesignerExpression(rule.condition, document, `${itemPath}.condition`, {
           allowCurrentRow,
+          currentEntityCode: expressionEntityCode(document, path),
         }),
       )
     if (
@@ -882,6 +904,7 @@ function diagnoseValidationConfiguration(
     result.push(
       ...diagnoseDesignerExpression(configuration.expression, document, `${path}.expression`, {
         allowCurrentRow,
+        currentEntityCode: expressionEntityCode(document, path),
       }),
     )
   }
@@ -1042,7 +1065,7 @@ function diagnoseEventFlows(document: DesignerDocument, result: DesignerDiagnost
         result,
       )
       if (
-        !['INITIALIZED', 'BEFORE_SUBMIT', 'AFTER_SUBMIT', 'RESET'].includes(
+        !['INITIALIZED', 'BEFORE_SUBMIT', 'AFTER_SUBMIT', 'AFTER_COMMIT', 'RESET'].includes(
           String(flow.trigger.event),
         )
       )
@@ -1154,6 +1177,7 @@ function diagnoseEventSteps(
         result.push(
           ...diagnoseDesignerExpression(step.guard, document, `${itemPath}.guard`, {
             allowCurrentRow,
+            currentEntityCode: expressionEntityCode(document, path),
           }),
         )
       if (isRecord(step.configuration))
@@ -1206,6 +1230,7 @@ function diagnoseEventSteps(
         result.push(
           ...diagnoseDesignerExpression(branch.condition, document, `${branchPath}.condition`, {
             allowCurrentRow,
+            currentEntityCode: expressionEntityCode(document, path),
           }),
         )
         diagnoseEventSteps(
@@ -1250,9 +1275,16 @@ function diagnoseEventActionConfiguration(
   result: DesignerDiagnostic[],
 ): void {
   const allowed: Record<DesignerEventActionType, string[]> = {
-    SET_FIELD: ['fieldId', 'value', 'expression'],
-    CLEAR_FIELD: ['fieldId'],
-    COPY_FIELD: ['sourceFieldId', 'targetFieldId'],
+    SET_FIELD: ['fieldId', 'value', 'expression', 'scope', 'ancestorDepth'],
+    CLEAR_FIELD: ['fieldId', 'scope', 'ancestorDepth'],
+    COPY_FIELD: [
+      'sourceFieldId',
+      'targetFieldId',
+      'sourceScope',
+      'sourceAncestorDepth',
+      'targetScope',
+      'targetAncestorDepth',
+    ],
     SET_VARIABLE: ['variableCode', 'value', 'expression'],
     VALIDATE: [],
     SUBMIT: [],
@@ -1284,6 +1316,37 @@ function diagnoseEventActionConfiguration(
       result.push(
         error('EVENT_ACTION_FIELD', '动作引用了不存在的字段', `${path}.configuration.${key}`),
       )
+  for (const key of requiredFieldReferences) {
+    const scopeKey =
+      key === 'sourceFieldId' ? 'sourceScope' : key === 'targetFieldId' ? 'targetScope' : 'scope'
+    const depthKey =
+      key === 'sourceFieldId'
+        ? 'sourceAncestorDepth'
+        : key === 'targetFieldId'
+          ? 'targetAncestorDepth'
+          : 'ancestorDepth'
+    const field = document.dataSchema.fields.find((item) => item.id === configuration[key])
+    const scope =
+      configuration[scopeKey] ??
+      (allowCurrentRow && field?.entityCode !== document.dataSchema.rootEntity.code
+        ? 'CURRENT_ROW'
+        : 'ROOT')
+    result.push(
+      ...diagnoseDesignerExpression(
+        {
+          kind: 'FIELD',
+          fieldId: configuration[key],
+          scope,
+          ...(configuration[depthKey] !== undefined
+            ? { ancestorDepth: configuration[depthKey] }
+            : {}),
+        },
+        document,
+        `${path}.configuration.${key}`,
+        { allowCurrentRow, currentEntityCode: expressionEntityCode(document, path) },
+      ),
+    )
+  }
   if (type === 'SET_VARIABLE' && !references.variableCodes.has(String(configuration.variableCode)))
     result.push(
       error(
@@ -1318,6 +1381,7 @@ function diagnoseEventActionConfiguration(
         `${path}.configuration.expression`,
         {
           allowCurrentRow,
+          currentEntityCode: expressionEntityCode(document, path),
         },
       ),
     )
@@ -1430,4 +1494,40 @@ function finiteNumberOrUndefined(value: unknown): number | undefined {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** 将诊断路径还原为字段或组件所在的实体，供表达式校验约束当前行与祖先。 */
+function expressionEntityCode(document: DesignerDocument, path: string): string | undefined {
+  const fieldIndex = /dataSchema\.fields\[(\d+)\]/.exec(path)?.[1]
+  if (fieldIndex !== undefined) return document.dataSchema.fields[Number(fieldIndex)]?.entityCode
+  const flowIndex = /eventFlows\[(\d+)\]/.exec(path)?.[1]
+  const flow = flowIndex === undefined ? undefined : document.eventFlows[Number(flowIndex)]
+  if (flow?.trigger.scope !== 'COMPONENT') return document.dataSchema.rootEntity.code
+  const nodeId = flow.trigger.nodeId
+  const visit = (nodes: DesignerLayoutNode[], code: string): string | undefined => {
+    for (const node of nodes) {
+      if (node.id === nodeId) return code
+      if (node.nodeType !== 'CONTAINER') continue
+      const relation = document.dataSchema.relations.find(
+        (item) => item.code === node.configuration.relationCode,
+      )
+      for (const slot of node.slots) {
+        const found = visit(slot.children, relation?.childEntity.code ?? code)
+        if (found) return found
+      }
+    }
+    return undefined
+  }
+  return (
+    visit(document.uiSchema.root, document.dataSchema.rootEntity.code) ??
+    document.uiSchema.overlays
+      .map((overlay) =>
+        visit(
+          overlay.root,
+          document.dataSchema.entities.find((entity) => entity.id === overlay.contextEntityId)
+            ?.code ?? document.dataSchema.rootEntity.code,
+        ),
+      )
+      .find(Boolean)
+  )
 }

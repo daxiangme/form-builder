@@ -28,7 +28,7 @@ export interface DesignerSubtableProjectionOptions {
 /**
  * 将容器的命名插槽投影为稳定子表列。
  *
- * 只有字段节点可以形成数据列；布局节点由 DropPolicy 拒绝，历史异常节点在投影阶段失败关闭，
+ * 只有直接字段节点形成数据列；嵌套布局与关系节点由行内容渲染器单独递归处理，
  * 不会被伪装为可编辑文本列。缺失字段仍保留列身份并标记为失效，方便设计态定位问题。
  *
  * @param container 子表容器节点。
@@ -51,7 +51,8 @@ export function projectDesignerSubtableColumns(
   const columnFieldIds = new Set<string>()
 
   for (const node of slot?.children ?? []) {
-    if (node.nodeType !== 'FIELD' || columnFieldIds.has(node.fieldId)) return []
+    if (node.nodeType !== 'FIELD') continue
+    if (columnFieldIds.has(node.fieldId)) return []
     columnFieldIds.add(node.fieldId)
   }
 

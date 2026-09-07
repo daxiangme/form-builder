@@ -117,6 +117,8 @@
       <DesignerExpressionEditor
         :model-value="expressionValue"
         :fields="document.dataSchema.fields"
+        :document="document"
+        :current-entity-code="field.entityCode"
         :variables="document.variables"
         :allow-current-row="allowCurrentRow"
         mode="condition"

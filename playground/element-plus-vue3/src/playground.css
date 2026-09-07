@@ -62,9 +62,13 @@ body,
 }
 
 .playground-workspace.is-runtime {
+  display: flex;
+  flex-direction: column;
   width: min(1180px, 100%);
+  height: calc(100vh - 64px);
   padding: 24px;
   margin: 0 auto;
+  overflow: auto;
 }
 
 @media (width <= 900px) {

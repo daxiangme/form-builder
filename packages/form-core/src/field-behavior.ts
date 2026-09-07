@@ -242,7 +242,7 @@ function createValidationConfiguration<Type extends DesignerValidationRuleType>(
   const comparisonField = document.dataSchema.fields.find(
     (candidate) => candidate.id !== field.id && candidate.entityCode === field.entityCode,
   )
-  const subtableId = findFirstSubtableId(document)
+  const subtableId = findFirstSubtableId(document, field.entityCode)
   const configurations: DesignerValidationConfigurationMap = {
     LENGTH: {},
     RANGE: {},
@@ -292,29 +292,43 @@ function hasSubtable(document: DesignerDocument): boolean {
   return Boolean(findFirstSubtableId(document))
 }
 
-function findFirstSubtableId(document: DesignerDocument): string {
+function findFirstSubtableId(document: DesignerDocument, entityCode?: string): string {
+  const parentEntityId = entityCode
+    ? (document.dataSchema.entities?.find((entity) => entity.code === entityCode)?.id ??
+      (document.dataSchema.rootEntity.code === entityCode
+        ? document.dataSchema.rootEntity.id
+        : document.dataSchema.relations.find((relation) => relation.childEntity.code === entityCode)
+            ?.childEntity.id))
+    : undefined
   const roots = [
     document.uiSchema.root,
     ...document.uiSchema.overlays.map((overlay) => overlay.root),
   ]
   for (const root of roots) {
-    const found = findSubtableInNodes(root)
+    const found = findSubtableInNodes(root, document, parentEntityId)
     if (found) return found
   }
   return ''
 }
 
-function findSubtableInNodes(nodes: DesignerDocument['uiSchema']['root']): string {
+function findSubtableInNodes(
+  nodes: DesignerDocument['uiSchema']['root'],
+  document: DesignerDocument,
+  parentEntityId?: string,
+): string {
   for (const node of nodes) {
     if (
       node.nodeType === 'CONTAINER' &&
       ['row-subtable', 'block-subtable'].includes(node.componentType)
     ) {
-      return node.id
+      const relation = document.dataSchema.relations.find(
+        (item) => item.code === node.configuration.relationCode,
+      )
+      if (!parentEntityId || relation?.parentEntityId === parentEntityId) return node.id
     }
     if (node.nodeType === 'CONTAINER') {
       for (const slot of node.slots) {
-        const nested = findSubtableInNodes(slot.children)
+        const nested = findSubtableInNodes(slot.children, document, parentEntityId)
         if (nested) return nested
       }
     }

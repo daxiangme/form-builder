@@ -53,7 +53,8 @@
         >
           <ElOption label="初始化完成" value="INITIALIZED" />
           <ElOption label="提交前" value="BEFORE_SUBMIT" />
-          <ElOption label="提交后" value="AFTER_SUBMIT" />
+          <ElOption label="投影发出后" value="AFTER_SUBMIT" />
+          <ElOption label="保存回执成功后" value="AFTER_COMMIT" />
           <ElOption label="重置" value="RESET" />
         </ElSelect>
         <ElSelect v-else v-model="selectedFlow.trigger.event" :disabled="lockIdentity">
@@ -121,7 +122,7 @@
               @update:model-value="setActionConfiguration(selectedStep, 'fieldId', $event)"
             >
               <ElOption
-                v-for="field in document.dataSchema.fields"
+                v-for="field in actionScopedFields(selectedStep, 'fieldId')"
                 :key="field.id"
                 :label="field.label"
                 :value="field.id"
@@ -135,7 +136,7 @@
                 @update:model-value="setActionConfiguration(selectedStep, 'sourceFieldId', $event)"
               >
                 <ElOption
-                  v-for="field in document.dataSchema.fields"
+                  v-for="field in actionScopedFields(selectedStep, 'sourceFieldId')"
                   :key="field.id"
                   :label="field.label"
                   :value="field.id"
@@ -148,12 +149,35 @@
                 @update:model-value="setActionConfiguration(selectedStep, 'targetFieldId', $event)"
               >
                 <ElOption
-                  v-for="field in document.dataSchema.fields"
+                  v-for="field in actionScopedFields(selectedStep, 'targetFieldId')"
                   :key="field.id"
                   :label="field.label"
                   :value="field.id"
                 />
               </ElSelect>
+            </ElFormItem>
+          </template>
+          <template v-for="scope in actionFieldScopes" :key="scope.key">
+            <ElFormItem :label="scope.label">
+              <ElSelect
+                :model-value="actionScopeValue(selectedStep, scope.fieldKey, scope.key)"
+                @update:model-value="setActionConfiguration(selectedStep, scope.key, $event)"
+              >
+                <ElOption label="主表" value="ROOT" />
+                <ElOption v-if="selectedFlowAllowsCurrentRow" label="当前行" value="CURRENT_ROW" />
+                <ElOption v-if="selectedFlowAllowsCurrentRow" label="祖先行" value="ANCESTOR" />
+              </ElSelect>
+            </ElFormItem>
+            <ElFormItem
+              v-if="actionScopeValue(selectedStep, scope.fieldKey, scope.key) === 'ANCESTOR'"
+              label="祖先层数（1 为直接父行）"
+            >
+              <ElInputNumber
+                :model-value="Number(selectedStep.configuration[scope.depthKey] ?? 1)"
+                :min="1"
+                :max="16"
+                @update:model-value="setActionConfiguration(selectedStep, scope.depthKey, $event)"
+              />
             </ElFormItem>
           </template>
           <ElFormItem
@@ -163,6 +187,8 @@
             <DesignerExpressionEditor
               :model-value="expressionConfiguration(selectedStep)"
               :fields="document.dataSchema.fields"
+              :document="document"
+              :current-entity-code="selectedFlowEntityCode"
               :variables="document.variables"
               :allow-current-row="selectedFlowAllowsCurrentRow"
               mode="value"
@@ -264,6 +290,8 @@
               v-if="selectedStep.guard"
               v-model="selectedStep.guard"
               :fields="document.dataSchema.fields"
+              :document="document"
+              :current-entity-code="selectedFlowEntityCode"
               :variables="document.variables"
               :allow-current-row="selectedFlowAllowsCurrentRow"
               mode="condition"
@@ -307,6 +335,8 @@
             <DesignerExpressionEditor
               v-model="branch.condition"
               :fields="document.dataSchema.fields"
+              :document="document"
+              :current-entity-code="selectedFlowEntityCode"
               :variables="document.variables"
               :allow-current-row="selectedFlowAllowsCurrentRow"
               mode="condition"
@@ -385,7 +415,45 @@ const selectedFlow = computed(() =>
 )
 const selectedFlowAllowsCurrentRow = computed(() => {
   const flow = selectedFlow.value
-  return flow?.trigger.scope === 'COMPONENT' && nodeUsesCurrentRowContext(flow.trigger.nodeId)
+  return (
+    flow?.trigger.scope === 'COMPONENT' &&
+    (nodeUsesCurrentRowContext(flow.trigger.nodeId) ||
+      selectedFlowEntityCode.value !== props.document.dataSchema.rootEntity.code)
+  )
+})
+const selectedFlowEntityCode = computed(() => {
+  const flow = selectedFlow.value
+  if (flow?.trigger.scope !== 'COMPONENT') return props.document.dataSchema.rootEntity.code
+  const nodeId = flow.trigger.nodeId
+  const visit = (
+    nodes: DesignerDocument['uiSchema']['root'],
+    entityCode: string,
+  ): string | undefined => {
+    for (const node of nodes) {
+      if (node.id === nodeId) return entityCode
+      if (node.nodeType !== 'CONTAINER') continue
+      const relation = props.document.dataSchema.relations.find(
+        (item) => item.code === node.configuration.relationCode,
+      )
+      for (const slot of node.slots) {
+        const found = visit(slot.children, relation?.childEntity.code ?? entityCode)
+        if (found) return found
+      }
+    }
+    return undefined
+  }
+  return (
+    visit(props.document.uiSchema.root, props.document.dataSchema.rootEntity.code) ??
+    props.document.uiSchema.overlays
+      .map((overlay) =>
+        visit(
+          overlay.root,
+          props.document.dataSchema.entities.find((entity) => entity.id === overlay.contextEntityId)
+            ?.code ?? props.document.dataSchema.rootEntity.code,
+        ),
+      )
+      .find(Boolean)
+  )
 })
 const selectedFlowComponentEvents = computed<DesignerComponentEvent[]>(() => {
   const flow = selectedFlow.value
@@ -484,6 +552,93 @@ function removeFlow(flowId: string): void {
 
 function handleStepDelete(stepId: string): void {
   if (selectedStep.value?.id === stepId) selectedStep.value = undefined
+}
+
+const actionFieldScopes = computed(() => {
+  const step = selectedStep.value
+  if (step?.stepType !== 'ACTION') return []
+  if (step.actionType === 'COPY_FIELD')
+    return [
+      {
+        key: 'sourceScope',
+        fieldKey: 'sourceFieldId',
+        depthKey: 'sourceAncestorDepth',
+        label: '来源作用域',
+      },
+      {
+        key: 'targetScope',
+        fieldKey: 'targetFieldId',
+        depthKey: 'targetAncestorDepth',
+        label: '目标作用域',
+      },
+    ]
+  return ['SET_FIELD', 'CLEAR_FIELD'].includes(step.actionType)
+    ? [{ key: 'scope', fieldKey: 'fieldId', depthKey: 'ancestorDepth', label: '字段作用域' }]
+    : []
+})
+
+function actionScopeValue(
+  step: DesignerEventActionStep,
+  fieldKey: string,
+  scopeKey: string,
+): string {
+  const value = configurationText(step, scopeKey)
+  if (value) return value
+  const field = props.document.dataSchema.fields.find(
+    (item) => item.id === step.configuration[fieldKey],
+  )
+  return field &&
+    field.entityCode !== props.document.dataSchema.rootEntity.code &&
+    selectedFlowAllowsCurrentRow.value
+    ? 'CURRENT_ROW'
+    : 'ROOT'
+}
+
+function actionScopedFields(step: DesignerEventActionStep, fieldKey: string) {
+  const scopeKey =
+    fieldKey === 'sourceFieldId'
+      ? 'sourceScope'
+      : fieldKey === 'targetFieldId'
+        ? 'targetScope'
+        : 'scope'
+  const depthKey =
+    fieldKey === 'sourceFieldId'
+      ? 'sourceAncestorDepth'
+      : fieldKey === 'targetFieldId'
+        ? 'targetAncestorDepth'
+        : 'ancestorDepth'
+  const scope = actionScopeValue(step, fieldKey, scopeKey)
+  const document = props.document
+  if (scope === 'ROOT')
+    return document.dataSchema.fields.filter(
+      (field) => field.entityCode === document.dataSchema.rootEntity.code,
+    )
+  const relations = document.dataSchema.relations.filter(
+    (relation) => relation.childEntity.code === selectedFlowEntityCode.value,
+  )
+  if (scope === 'CURRENT_ROW') {
+    const codes = new Set([
+      selectedFlowEntityCode.value,
+      ...relations.flatMap((relation) =>
+        relation.kind === 'MANY_TO_MANY' ? [relation.targetEntity.code] : [],
+      ),
+    ])
+    return document.dataSchema.fields.filter((field) => codes.has(field.entityCode))
+  }
+  let ids = new Set(relations.map((relation) => relation.parentEntityId))
+  const depth = Number(step.configuration[depthKey] ?? 1)
+  for (let index = 1; index < depth && index < 16; index += 1)
+    ids = new Set(
+      document.dataSchema.relations
+        .filter((relation) => ids.has(relation.childEntity.id))
+        .map((relation) => relation.parentEntityId),
+    )
+  const codes = new Set(
+    document.dataSchema.entities
+      .filter((entity) => ids.has(entity.id))
+      .map((entity) => entity.code),
+  )
+  return document.dataSchema.fields.filter((field) => codes.has(field.entityCode))
 }
 
 function configurationText(step: DesignerEventActionStep, key: string): string {

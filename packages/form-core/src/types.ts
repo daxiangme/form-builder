@@ -1,5 +1,11 @@
+import type {
+  FormRelationDataAdapter,
+  FormRelationSelectionAdapter,
+  FormSubmissionStatusAdapter,
+} from './runtime-session-types'
+
 /** 设计器文档当前稳定版本。 */
-export const DESIGNER_DOCUMENT_VERSION = '1.0' as const
+export const DESIGNER_DOCUMENT_VERSION = '2.0' as const
 
 /** 设计器字段的语义数据类型，不包含任何数据库方言。 */
 export type DesignerSemanticType =
@@ -82,7 +88,7 @@ export interface DesignerRuntimeValueStore {
 }
 
 /** 表达式读取字段时的受控数据作用域。 */
-export type DesignerExpressionFieldScope = 'ROOT' | 'CURRENT_ROW'
+export type DesignerExpressionFieldScope = 'ROOT' | 'CURRENT_ROW' | 'ANCESTOR'
 
 /** 表达式可读取的受控上下文值。 */
 export type DesignerExpressionContextKey =
@@ -91,7 +97,13 @@ export type DesignerExpressionContextKey =
 /** 声明式表达式 AST；Core 不持久化或执行自由脚本。 */
 export type DesignerExpression =
   | { kind: 'LITERAL'; value: string | number | boolean | null }
-  | { kind: 'FIELD'; fieldId: string; scope: DesignerExpressionFieldScope }
+  | {
+      kind: 'FIELD'
+      fieldId: string
+      scope: DesignerExpressionFieldScope
+      /** ANCESTOR 作用域的父链层数；1 表示直接父行。 */
+      ancestorDepth?: number
+    }
   | { kind: 'VARIABLE'; variableCode: string }
   | { kind: 'CONTEXT'; key: DesignerExpressionContextKey }
   | {
@@ -262,8 +274,10 @@ export interface DesignerDataEntity {
   name: string
 }
 
-/** 当前 Core 支持的主实体到一级子实体一对多关系。 */
+/** 任意合法父实体到子实体的一对多关系。 */
 export interface DesignerOneToManyRelation {
+  /** 关系操作语义；子行归属于当前父行。 */
+  kind: 'ONE_TO_MANY'
   id: string
   code: string
   name: string
@@ -271,6 +285,17 @@ export interface DesignerOneToManyRelation {
   childEntity: DesignerDataEntity
   loadMode: 'SYNC' | 'ASYNC'
 }
+
+/** 多对多关系；childEntity 是关联记录实体，targetEntity 是共享目标实体。 */
+export interface DesignerManyToManyRelation extends Omit<DesignerOneToManyRelation, 'kind'> {
+  /** 关联与解除操作不代表创建或删除共享目标实体。 */
+  kind: 'MANY_TO_MANY'
+  /** 被关联的共享目标实体，不含宿主运行引用。 */
+  targetEntity: DesignerDataEntity
+}
+
+/** 设计文档中的关系定义；运行身份及权限由独立会话持有。 */
+export type DesignerRelation = DesignerOneToManyRelation | DesignerManyToManyRelation
 
 /** 字段基础校验。专属校验继续存放在版本化组件配置中。 */
 export interface DesignerFieldValidation {
@@ -318,7 +343,9 @@ export interface DesignerField {
 export interface DesignerDataSchema {
   source?: DesignerDataModelSource
   rootEntity: DesignerDataEntity
-  relations: DesignerOneToManyRelation[]
+  /** 以实体 ID 唯一化的语义目录，包含根实体、子实体、关联实体及共享目标。 */
+  entities: DesignerDataEntity[]
+  relations: DesignerRelation[]
   fields: DesignerField[]
 }
 
@@ -470,7 +497,8 @@ export interface DesignerDataSourceDefinition {
 }
 
 /** 表单生命周期事件。 */
-export type DesignerFormEvent = 'INITIALIZED' | 'BEFORE_SUBMIT' | 'AFTER_SUBMIT' | 'RESET'
+export type DesignerFormEvent =
+  'INITIALIZED' | 'BEFORE_SUBMIT' | 'AFTER_SUBMIT' | 'AFTER_COMMIT' | 'RESET'
 
 /** 声明式动作步骤类型。 */
 export type DesignerEventActionType =
@@ -553,6 +581,8 @@ export interface DesignerOverlayModule {
   name: string
   kind: DesignerOverlayKind
   dataContext: DesignerOverlayDataContext
+  /** 行草稿的语义实体 ID；主表草稿使用根实体。 */
+  contextEntityId?: string
   width: number
   /**
    * 弹窗使用的受控圆角；抽屉保留该值但不渲染圆角。
@@ -739,6 +769,14 @@ export interface DesignerComponentRegistration {
 export interface DesignerExpressionRuntimeContext {
   fields: Record<string, unknown>
   currentRow?: Record<string, unknown>
+  /** 当前行的祖先值，从直接父行开始；仅包含已授权可读字段。 */
+  ancestors?: Record<string, unknown>[]
+  /** 会话提供的权威读值入口；存在时所有字段引用经该入口执行权限与作用域检查。 */
+  readField?: (
+    fieldId: string,
+    scope: DesignerExpressionFieldScope,
+    ancestorDepth?: number,
+  ) => unknown
   variables: Record<string, unknown>
   context: Partial<Record<DesignerExpressionContextKey, unknown>>
 }
@@ -1019,6 +1057,12 @@ export interface DesignerLinkageConfirmationAdapter {
 
 /** 静态运行预览可选 Adapter 集合；缺少能力时必须失败关闭。 */
 export interface DesignerRuntimeAdapters {
+  /** 按集合作用域加载已授权关系行。 */
+  relationData?: FormRelationDataAdapter
+  /** 多对多候选查询、引用回显与选择有效性检查。 */
+  relationSelection?: FormRelationSelectionAdapter
+  /** 查询结果未知的提交批次，避免盲目重放已执行操作。 */
+  submissionStatus?: FormSubmissionStatusAdapter
   asset?: FormAssetAdapter
   remoteValidation?: DesignerRemoteValidationAdapter
   dataSource?: DesignerDataSourceAdapter
@@ -1054,6 +1098,14 @@ export interface DesignerDiagnostic {
 export interface DesignerDocumentDecodeResult {
   document?: DesignerDocument
   diagnostics: DesignerDiagnostic[]
+}
+
+/** 文档诊断的资源限制；宿主可与运行会话使用相同设置。 */
+export interface DesignerDocumentLimits {
+  /** 最大关系嵌套层数，默认 16。 */
+  maxRelationDepth?: number
+  /** 最大布局嵌套层数，默认 32。 */
+  maxLayoutDepth?: number
 }
 
 /** 画布中可接收新节点的稳定目标。 */
@@ -1141,8 +1193,9 @@ export interface DesignerInitialEntity {
   fields: DesignerInitialField[]
 }
 
-/** Host 首次向独立 Core 注入的一级一对多关系。 */
+/** Host 首次注入的一对多关系；省略 kind 时兼容旧一级参数。 */
 export interface DesignerInitialOneToManyRelation {
+  kind?: 'ONE_TO_MANY'
   relationId: string
   relationCode: string
   relationName: string
@@ -1152,13 +1205,28 @@ export interface DesignerInitialOneToManyRelation {
   keyMappings?: Array<{ parentFieldId: string; childFieldId: string }>
 }
 
+/** Host 首次注入的多对多关系，关联实体和共享目标实体分别声明。 */
+export interface DesignerInitialManyToManyRelation extends Omit<
+  DesignerInitialOneToManyRelation,
+  'kind'
+> {
+  kind: 'MANY_TO_MANY'
+  targetEntity: DesignerInitialEntity
+}
+
+/** 首次参数中的通用关系定义。 */
+export type DesignerInitialRelation =
+  DesignerInitialOneToManyRelation | DesignerInitialManyToManyRelation
+
 /** Host 首次初始化 Core 时使用的数据模型参数。 */
 export interface DesignerInitialDataModel {
   provider: string
   sourceId: string
   sourceRevision?: number
   rootEntity: DesignerInitialEntity
-  relations: DesignerInitialOneToManyRelation[]
+  /** 可选规范实体目录；省略时从根实体与关系引用归并，保持旧参数兼容。 */
+  entities?: DesignerInitialEntity[]
+  relations: DesignerInitialRelation[]
 }
 
 /** 物理来源信息只存在于当前 Core 会话，绝不进入设计文档。 */
@@ -1179,6 +1247,8 @@ export interface DesignerSourceMetadataIndex {
 /** 字段页一次生成主表和子表布局时的受控请求。 */
 export interface DesignerGenerateLayoutRequest {
   fieldIds: string[]
+  /** 明确字段应放入的关系容器；共享目标字段可在不同关系布局中复用。 */
+  fieldPlacements?: Array<{ fieldId: string; relationCode: string }>
   relations: Array<{
     relationCode: string
     componentType: 'row-subtable' | 'block-subtable'
@@ -1194,4 +1264,10 @@ export interface DesignerRelationPatch {
   code?: string
   childEntityName?: string
   childEntityCode?: string
+  /** 更改关系语义；切换为多对多时必须同时指定合法目标实体 ID。 */
+  kind?: DesignerRelation['kind']
+  /** 多对多共享目标在规范实体目录中的 ID。 */
+  targetEntityId?: string
+  /** 创建新的本地共享实体并作为目标；只包含语义名称和编码。 */
+  createTargetEntity?: Pick<DesignerDataEntity, 'name' | 'code'>
 }
