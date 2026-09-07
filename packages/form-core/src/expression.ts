@@ -23,6 +23,14 @@ export function evaluateDesignerExpression(
     }
     if (node.kind === 'LITERAL') return node.value
     if (node.kind === 'FIELD') {
+      if (runtime.readField) return runtime.readField(node.fieldId, node.scope, node.ancestorDepth)
+      if (node.scope === 'ANCESTOR') {
+        const depth = node.ancestorDepth
+        if (!Number.isInteger(depth) || !depth || depth < 1) throw new Error('祖先层数不正确')
+        const ancestor = runtime.ancestors?.[depth - 1]
+        if (!ancestor) throw new Error('祖先作用域不存在')
+        return ancestor[node.fieldId]
+      }
       return node.scope === 'CURRENT_ROW'
         ? runtime.currentRow?.[node.fieldId]
         : runtime.fields[node.fieldId]
@@ -64,7 +72,13 @@ export function diagnoseDesignerExpression(
   expression: unknown,
   document: DesignerDocument,
   path: string,
-  options: { allowCurrentRow: boolean } = { allowCurrentRow: false },
+  options: {
+    allowCurrentRow: boolean
+    /** 当前字段所属实体；提供后当前行引用必须属于同一实体。 */
+    currentEntityCode?: string
+    /** 从直接父实体开始的合法祖先链。 */
+    ancestorEntityCodes?: readonly string[]
+  } = { allowCurrentRow: false },
 ): DesignerDiagnostic[] {
   const diagnostics: DesignerDiagnostic[] = []
   const fieldIds = new Set(
@@ -98,13 +112,13 @@ export function diagnoseDesignerExpression(
       return
     }
     if (node.kind === 'FIELD') {
-      unknownKeys(node, ['kind', 'fieldId', 'scope'], nodePath, diagnostics)
+      unknownKeys(node, ['kind', 'fieldId', 'scope', 'ancestorDepth'], nodePath, diagnostics)
       if (typeof node.fieldId !== 'string' || !fieldIds.has(node.fieldId)) {
         diagnostics.push(
           error('EXPRESSION_FIELD', '表达式引用了不存在的字段', `${nodePath}.fieldId`),
         )
       }
-      if (!['ROOT', 'CURRENT_ROW'].includes(String(node.scope))) {
+      if (!['ROOT', 'CURRENT_ROW', 'ANCESTOR'].includes(String(node.scope))) {
         diagnostics.push(error('EXPRESSION_SCOPE', '字段表达式作用域不正确', `${nodePath}.scope`))
       } else if (node.scope === 'CURRENT_ROW' && !options.allowCurrentRow) {
         diagnostics.push(
@@ -113,6 +127,62 @@ export function diagnoseDesignerExpression(
       } else {
         const field = fieldsById.get(String(node.fieldId))
         const rootEntityCode = document.dataSchema?.rootEntity?.code
+        if (node.scope === 'ANCESTOR') {
+          const depth = node.ancestorDepth
+          if (!options.allowCurrentRow || !Number.isSafeInteger(depth) || Number(depth) < 1) {
+            diagnostics.push(
+              error(
+                'EXPRESSION_ANCESTOR',
+                '祖先引用必须具有有效的父链层数',
+                `${nodePath}.ancestorDepth`,
+              ),
+            )
+          } else if (
+            options.ancestorEntityCodes
+              ? options.ancestorEntityCodes[Number(depth) - 1] !== field?.entityCode
+              : options.currentEntityCode &&
+                field &&
+                !hasAncestorEntity(
+                  document,
+                  options.currentEntityCode,
+                  field.entityCode,
+                  Number(depth),
+                )
+          ) {
+            diagnostics.push(
+              error('EXPRESSION_ANCESTOR', '字段不属于指定祖先实体', `${nodePath}.fieldId`),
+            )
+          }
+        } else if (node.ancestorDepth !== undefined) {
+          diagnostics.push(
+            error(
+              'EXPRESSION_ANCESTOR',
+              '只有祖先作用域可以配置父链层数',
+              `${nodePath}.ancestorDepth`,
+            ),
+          )
+        }
+        const sameAssociation = document.dataSchema.relations.some(
+          (relation) =>
+            relation.kind === 'MANY_TO_MANY' &&
+            [relation.childEntity.code, relation.targetEntity.code].includes(
+              options.currentEntityCode ?? '',
+            ) &&
+            [relation.childEntity.code, relation.targetEntity.code].includes(
+              field?.entityCode ?? '',
+            ),
+        )
+        if (
+          node.scope === 'CURRENT_ROW' &&
+          options.currentEntityCode &&
+          field &&
+          field.entityCode !== options.currentEntityCode &&
+          !sameAssociation
+        ) {
+          diagnostics.push(
+            error('EXPRESSION_SCOPE', '当前行引用必须属于当前实体', `${nodePath}.fieldId`),
+          )
+        }
         if (
           field &&
           rootEntityCode &&
@@ -319,6 +389,38 @@ function isDesignerExpressionFunction(value: unknown): boolean {
     'LENGTH',
     'IF',
   ].includes(String(value))
+}
+
+function hasAncestorEntity(
+  document: DesignerDocument,
+  currentEntityCode: string,
+  targetEntityCode: string,
+  depth: number,
+): boolean {
+  const entities = new Map(document.dataSchema.entities.map((entity) => [entity.id, entity.code]))
+  let codes = new Set([currentEntityCode])
+  const seen = new Map<string, number>()
+  for (let level = 0; level < depth; level += 1) {
+    const key = JSON.stringify([...codes].sort())
+    const previous = seen.get(key)
+    if (previous !== undefined) {
+      const cycle = level - previous
+      const remaining = (depth - level) % cycle
+      if (remaining === 0) return codes.has(targetEntityCode)
+      level = depth - remaining
+    } else seen.set(key, level)
+    codes = new Set(
+      document.dataSchema.relations.flatMap((relation) => {
+        const matches =
+          codes.has(relation.childEntity.code) ||
+          (relation.kind === 'MANY_TO_MANY' && codes.has(relation.targetEntity.code))
+        const parent = matches ? entities.get(relation.parentEntityId) : undefined
+        return parent ? [parent] : []
+      }),
+    )
+    if (codes.size === 0) return false
+  }
+  return codes.has(targetEntityCode)
 }
 
 function validFunctionArgumentCount(value: unknown, count: number): boolean {

@@ -11,6 +11,7 @@ import type {
   DesignerEventFlow,
   DesignerEventStep,
   DesignerExpression,
+  DesignerExpressionFieldScope,
   DesignerExpressionRuntimeContext,
   DesignerRuntimeAdapters,
   DesignerRuntimeMode,
@@ -35,14 +36,39 @@ export interface DesignerEventRuntimeHost {
   print?: () => void
   message?: (message: string, level: 'SUCCESS' | 'INFO' | 'WARNING' | 'ERROR') => void
   openModule?: (moduleCode: string) => void
-  confirmModule?: (moduleCode: string) => void
+  confirmModule?: (moduleCode: string) => void | Promise<void>
   cancelModule?: (moduleCode: string) => void
   /**
    * 判断目标字段是否允许事件写入。
    *
    * 未提供时仅按运行模式拦截写动作；提供后 HIDDEN / READ_ONLY 字段的赋值类动作失败关闭。
    */
-  isFieldWritable?: (fieldId: string) => boolean
+  isFieldWritable?: (
+    fieldId: string,
+    scope?: DesignerExpressionFieldScope,
+    ancestorDepth?: number,
+  ) => boolean
+  /** 使用运行会话的范围化读值；不得通过值是否存在推断所属实体。 */
+  readField?: (
+    fieldId: string,
+    scope?: DesignerExpressionFieldScope,
+    ancestorDepth?: number,
+  ) => unknown
+  /** 通过运行会话命令写值，统一检查行作用域、权限与提交锁。 */
+  writeField?: (
+    fieldId: string,
+    value: unknown,
+    scope?: DesignerExpressionFieldScope,
+    ancestorDepth?: number,
+  ) => void
+  /** 通过运行会话写入变量，避免异步动作绕过提交锁。 */
+  writeVariable?: (variableCode: string, value: unknown) => void
+  /** 返回当前作用域的最新表达式上下文。 */
+  expressionRuntime?: () => DesignerExpressionRuntimeContext
+  /** 校验会话、草稿和异步执行代次仍然有效；失效时抛出无敏感信息的错误。 */
+  assertActive?: () => void
+  /** 托管会话隐藏外部 Adapter 的原始错误，防止不透明引用进入错误输出。 */
+  redactErrors?: boolean
 }
 
 /** 事件流执行结果。 */
@@ -80,15 +106,17 @@ export async function executeDesignerEventFlow(
     errors: [],
   }
   let visited = 0
-  const runtime = (): DesignerExpressionRuntimeContext => ({
-    fields: host.valueStore.fields,
-    variables: host.variables,
-    context: host.expressionContext,
-    currentRow: host.currentRow,
-  })
+  const runtime = (): DesignerExpressionRuntimeContext =>
+    host.expressionRuntime?.() ?? {
+      fields: host.valueStore.fields,
+      variables: host.variables,
+      context: host.expressionContext,
+      currentRow: host.currentRow,
+    }
   const executeSteps = async (steps: DesignerEventStep[], depth: number): Promise<boolean> => {
     if (depth > MAX_EVENT_DEPTH) throw new Error('事件流嵌套深度超过限制')
     for (const step of steps) {
+      host.assertActive?.()
       visited += 1
       if (visited > MAX_EVENT_STEPS) throw new Error('事件流步骤数量超过限制')
       result.executedStepIds.push(step.id)
@@ -109,7 +137,9 @@ export async function executeDesignerEventFlow(
       try {
         await executeAction(step, host, runtime())
       } catch (error) {
-        result.errors.push(`${step.name}：${error instanceof Error ? error.message : '执行失败'}`)
+        result.errors.push(
+          `${step.name}：${!host.redactErrors && error instanceof Error ? error.message : '执行失败'}`,
+        )
         if (step.onError === 'STOP') {
           result.blocked = true
           return false
@@ -122,7 +152,9 @@ export async function executeDesignerEventFlow(
     result.completed = await executeSteps(flow.steps, 0)
   } catch (error) {
     result.blocked = true
-    result.errors.push(error instanceof Error ? error.message : '事件流执行失败')
+    result.errors.push(
+      !host.redactErrors && error instanceof Error ? error.message : '事件流执行失败',
+    )
   } finally {
     activeFlowIds.delete(flow.id)
   }
@@ -145,28 +177,66 @@ async function executeAction(
       step.actionType === 'COPY_FIELD'
         ? requiredText(step.configuration.targetFieldId, '目标字段')
         : requiredText(step.configuration.fieldId, '目标字段')
-    assertFieldWritable(host, targetFieldId)
+    assertFieldWritable(
+      host,
+      targetFieldId,
+      actionScope(
+        step.actionType === 'COPY_FIELD'
+          ? step.configuration.targetScope
+          : step.configuration.scope,
+      ),
+      actionDepth(
+        step.actionType === 'COPY_FIELD'
+          ? step.configuration.targetAncestorDepth
+          : step.configuration.ancestorDepth,
+      ),
+    )
   }
   const configuration = step.configuration
   if (step.actionType === 'SET_FIELD') {
     const fieldId = requiredText(configuration.fieldId, '目标字段')
-    assignFieldValue(host, fieldId, cloneValue(resolveActionValue(configuration, runtime)))
+    assignFieldValue(
+      host,
+      fieldId,
+      cloneValue(resolveActionValue(configuration, runtime)),
+      actionScope(configuration.scope),
+      actionDepth(configuration.ancestorDepth),
+    )
     return
   }
   if (step.actionType === 'CLEAR_FIELD') {
     const fieldId = requiredText(configuration.fieldId, '目标字段')
-    assignFieldValue(host, fieldId, null)
+    assignFieldValue(
+      host,
+      fieldId,
+      null,
+      actionScope(configuration.scope),
+      actionDepth(configuration.ancestorDepth),
+    )
     return
   }
   if (step.actionType === 'COPY_FIELD') {
     const sourceFieldId = requiredText(configuration.sourceFieldId, '来源字段')
     const targetFieldId = requiredText(configuration.targetFieldId, '目标字段')
-    assignFieldValue(host, targetFieldId, cloneValue(readFieldValue(host, sourceFieldId)))
+    assignFieldValue(
+      host,
+      targetFieldId,
+      cloneValue(
+        readFieldValue(
+          host,
+          sourceFieldId,
+          actionScope(configuration.sourceScope),
+          actionDepth(configuration.sourceAncestorDepth),
+        ),
+      ),
+      actionScope(configuration.targetScope),
+      actionDepth(configuration.targetAncestorDepth),
+    )
     return
   }
   if (step.actionType === 'SET_VARIABLE') {
     const variableCode = requiredText(configuration.variableCode, '变量编码')
-    host.variables[variableCode] = cloneValue(resolveActionValue(configuration, runtime))
+    assignVariableValue(host, variableCode, cloneValue(resolveActionValue(configuration, runtime)))
     return
   }
   if (step.actionType === 'VALIDATE') {
@@ -201,7 +271,7 @@ async function executeAction(
   }
   if (step.actionType === 'CONFIRM_MODULE') {
     if (!host.confirmModule) throw new Error('当前 Host 未提供模块确认能力')
-    host.confirmModule(requiredText(configuration.moduleCode, '模块编码'))
+    await host.confirmModule(requiredText(configuration.moduleCode, '模块编码'))
     return
   }
   if (step.actionType === 'CANCEL_MODULE') {
@@ -222,7 +292,8 @@ async function executeAction(
     const adapter = host.adapters?.dataSource
     if (!adapter) throw new Error('当前 Host 未提供数据源能力')
     const definition = resolveDataSource(host.document, configuration.dataSourceCode)
-    const output = await adapter.execute(definition, resolveMappedInput(definition, runtime))
+    const output = await adapter.execute(definition, resolveMappedInput(definition, runtime, host))
+    host.assertActive?.()
     for (const mapping of definition.outputMappings) {
       if (mapping.target.startsWith('field:')) {
         assertFieldWritable(host, mapping.target.slice('field:'.length))
@@ -236,8 +307,10 @@ async function executeAction(
           cloneValue(output[mapping.source]),
         )
       } else if (mapping.target.startsWith('variable:')) {
-        host.variables[mapping.target.slice('variable:'.length)] = cloneValue(
-          output[mapping.source],
+        assignVariableValue(
+          host,
+          mapping.target.slice('variable:'.length),
+          cloneValue(output[mapping.source]),
         )
       }
     }
@@ -253,21 +326,53 @@ async function executeAction(
   }
 }
 
-function assertFieldWritable(host: DesignerEventRuntimeHost, fieldId: string): void {
-  if (host.isFieldWritable && !host.isFieldWritable(fieldId)) {
+function assertFieldWritable(
+  host: DesignerEventRuntimeHost,
+  fieldId: string,
+  scope?: DesignerExpressionFieldScope,
+  depth?: number,
+): void {
+  if (host.isFieldWritable && !host.isFieldWritable(fieldId, scope, depth)) {
     throw new Error('当前字段权限不允许事件流写入')
   }
 }
 
-function readFieldValue(host: DesignerEventRuntimeHost, fieldId: string): unknown {
+function readFieldValue(
+  host: DesignerEventRuntimeHost,
+  fieldId: string,
+  scope?: DesignerExpressionFieldScope,
+  depth?: number,
+): unknown {
+  if (host.readField) return host.readField(fieldId, scope, depth)
+  if (scope === 'ROOT') return host.valueStore.fields[fieldId]
+  if (scope === 'ANCESTOR') throw new Error('当前运行入口不支持祖先字段读取')
   return host.currentRow && fieldId in host.currentRow
     ? host.currentRow[fieldId]
     : host.valueStore.fields[fieldId]
 }
 
-function assignFieldValue(host: DesignerEventRuntimeHost, fieldId: string, value: unknown): void {
+function assignFieldValue(
+  host: DesignerEventRuntimeHost,
+  fieldId: string,
+  value: unknown,
+  scope?: DesignerExpressionFieldScope,
+  depth?: number,
+): void {
+  host.assertActive?.()
+  if (host.writeField) return host.writeField(fieldId, value, scope, depth)
+  if (scope === 'ROOT') {
+    host.valueStore.fields[fieldId] = value
+    return
+  }
+  if (scope === 'ANCESTOR') throw new Error('当前运行入口不支持祖先字段写入')
   if (host.currentRow && fieldId in host.currentRow) host.currentRow[fieldId] = value
   else host.valueStore.fields[fieldId] = value
+}
+
+function assignVariableValue(host: DesignerEventRuntimeHost, code: string, value: unknown): void {
+  host.assertActive?.()
+  if (host.writeVariable) host.writeVariable(code, value)
+  else host.variables[code] = value
 }
 
 function resolveActionValue(
@@ -293,16 +398,29 @@ function resolveDataSource(
 function resolveMappedInput(
   definition: DesignerDataSourceDefinition,
   runtime: DesignerExpressionRuntimeContext,
+  host: DesignerEventRuntimeHost,
 ): Record<string, unknown> {
   const input: Record<string, unknown> = {}
   for (const mapping of definition.inputMappings) {
     if (mapping.source.startsWith('field:'))
-      input[mapping.target] = runtime.fields[mapping.source.slice(6)]
+      input[mapping.target] = readFieldValue(host, mapping.source.slice(6))
     else if (mapping.source.startsWith('variable:')) {
       input[mapping.target] = runtime.variables[mapping.source.slice(9)]
     }
   }
   return input
+}
+
+function actionScope(value: unknown): DesignerExpressionFieldScope | undefined {
+  if (value === undefined) return undefined
+  if (value === 'ROOT' || value === 'CURRENT_ROW' || value === 'ANCESTOR') return value
+  throw new Error('字段动作作用域不正确')
+}
+
+function actionDepth(value: unknown): number | undefined {
+  if (value === undefined) return undefined
+  if (typeof value === 'number' && Number.isInteger(value) && value > 0) return value
+  throw new Error('祖先层数不正确')
 }
 
 function requiredText(value: unknown, label: string): string {

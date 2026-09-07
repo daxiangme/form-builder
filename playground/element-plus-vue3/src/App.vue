@@ -60,6 +60,15 @@
       />
     </section>
 
+    <section v-else-if="workspace === 'RELATION_DESIGN'" class="playground-workspace is-designer">
+      <ElFormDesigner
+        v-model="relationDocument"
+        @save-request="showMessage('关系设计文档已交给宿主保存')"
+      />
+    </section>
+    <section v-else-if="workspace === 'RELATIONS'" class="playground-workspace is-runtime">
+      <RelationPlayground :device="device" />
+    </section>
     <section v-else class="playground-workspace is-runtime">
       <ElFormRenderer
         v-model="runtimeValue"
@@ -83,6 +92,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
+import RelationPlayground from './RelationPlayground.vue'
+import { createRelationPlaygroundDocument } from './relation-playground-fixture'
 import {
   ElFormDesigner,
   ElFormRenderer,
@@ -108,6 +119,8 @@ type PolicyScenario = 'SCHEMA' | 'ALL_EDITABLE' | 'MIXED' | 'EMPTY'
 const workspaceOptions = [
   { label: '设计器', value: 'DESIGN' },
   { label: '运行态', value: 'RUNTIME' },
+  { label: '关系设计', value: 'RELATION_DESIGN' },
+  { label: '关系表单', value: 'RELATIONS' },
 ]
 const policyScenarioOptions: Array<{ label: string; value: PolicyScenario }> = [
   { label: '独立 Schema（不传策略）', value: 'SCHEMA' },
@@ -115,7 +128,7 @@ const policyScenarioOptions: Array<{ label: string; value: PolicyScenario }> = [
   { label: '权威投影 · 三态+必填', value: 'MIXED' },
   { label: '权威投影 · 空映射失败关闭', value: 'EMPTY' },
 ]
-const workspace = ref<'DESIGN' | 'RUNTIME'>('DESIGN')
+const workspace = ref<'DESIGN' | 'RUNTIME' | 'RELATION_DESIGN' | 'RELATIONS'>('DESIGN')
 const dark = ref(false)
 const device = ref<DesignerDevice>('desktop')
 const activeModule = ref('')
@@ -123,6 +136,7 @@ const runtimeMode = ref<RuntimeMode>('CREATE')
 const policyScenario = ref<PolicyScenario>('SCHEMA')
 const runtimeValue = ref<DesignerRuntimeValueStore>({ fields: {}, collections: {} })
 const document = ref<DesignerDocument>(createPlaygroundDocument())
+const relationDocument = ref<DesignerDocument>(createRelationPlaygroundDocument())
 const localAdapter = createLocalPreviewFormAdapter()
 const adapterContext = computed(() => ({
   applicationCode: 'playground',

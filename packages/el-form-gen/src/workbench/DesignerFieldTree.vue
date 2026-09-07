@@ -17,26 +17,23 @@
       </ElButton>
     </div>
     <div class="designer-field-tree__scroll">
-      <section
-        v-for="group in filteredGroups"
-        :key="group.entity.id"
-        class="designer-field-tree__group"
-      >
-        <header class="designer-field-tree__group-header">
-          <button type="button" @click="toggleGroup(group.entity.id)">
+      <section v-for="group in filteredGroups" :key="group.id" class="designer-field-tree__group">
+        <header
+          class="designer-field-tree__group-header"
+          :style="{ paddingInlineStart: `${group.level * 12}px` }"
+        >
+          <button type="button" @click="toggleGroup(group.id)">
             <DxSvgIcon
-              :icon="
-                expandedGroups[group.entity.id] ? 'ri:arrow-down-s-line' : 'ri:arrow-right-s-line'
-              "
+              :icon="expandedGroups[group.id] ? 'ri:arrow-down-s-line' : 'ri:arrow-right-s-line'"
             />
             <DxSvgIcon icon="ri:folder-3-fill" class="designer-field-tree__folder" />
             <span>
               <strong>{{ group.entity.name }}</strong>
-              <small>{{ group.entity.code }}</small>
+              <small>{{ group.path }} · {{ group.entity.code }}</small>
             </span>
             <ElTooltip
               v-if="group.relation"
-              :content="`一级一对多子表 · ${group.relation.name}`"
+              :content="`${group.target ? '共享实体字段（独立授权）' : group.relation.kind === 'MANY_TO_MANY' ? '多对多关联字段' : '一对多子表'} · ${group.relation.name}`"
               placement="right"
             >
               <span class="designer-field-tree__child-badge">
@@ -45,7 +42,7 @@
             </ElTooltip>
           </button>
           <ElTooltip
-            v-if="group.relation && !placedRelationCodes.has(group.relation.code)"
+            v-if="group.relation && !group.target && !placedRelationCodes.has(group.relation.code)"
             content="先创建子表容器，再手动放置该实体字段"
           >
             <ElButton
@@ -58,7 +55,7 @@
             </ElButton>
           </ElTooltip>
         </header>
-        <div v-if="expandedGroups[group.entity.id]" class="designer-field-tree__group-body">
+        <div v-if="expandedGroups[group.id]" class="designer-field-tree__group-body">
           <div v-if="hasSourceMetadata(group)" class="designer-field-tree__source">
             <span v-if="entityPhysicalName(group.entity.id)">
               物理表 · {{ entityPhysicalName(group.entity.id) }}
@@ -133,7 +130,11 @@
                   v-if="canRestoreField(field, group.relation)"
                   :content="group.relation ? '放置到已绑定子表' : '放置到主实体布局'"
                 >
-                  <ElButton link aria-label="重新放置" @click.stop="emit('restore', field.id)">
+                  <ElButton
+                    link
+                    aria-label="重新放置"
+                    @click.stop="emit('restore', field.id, group.relation?.code)"
+                  >
                     <DxSvgIcon icon="ri:add-line" />
                   </ElButton>
                 </ElTooltip>
@@ -174,16 +175,13 @@
         show-icon
         title="只添加尚未放置的字段和关系；主键、系统字段不会生成普通可写控件。"
       />
-      <section
-        v-for="group in groups"
-        :key="group.entity.id"
-        class="designer-field-tree__generator-group"
-      >
+      <section v-for="group in groups" :key="group.id" class="designer-field-tree__generator-group">
         <header>
           <span class="designer-field-tree__generator-identity">
             <DxSvgIcon icon="ri:folder-3-line" />
             <strong>{{ group.entity.name }}</strong>
-            <ElTag v-if="group.relation" effect="plain" type="warning">子</ElTag>
+            <ElTag v-if="group.target" effect="plain" type="info">共享目标</ElTag>
+            <ElTag v-else-if="group.relation" effect="plain" type="warning">子</ElTag>
           </span>
           <ElCheckbox
             :model-value="isGeneratedGroupFullySelected(group)"
@@ -193,7 +191,10 @@
           >
             {{ isGeneratedGroupFullySelected(group) ? '取消全选' : '全选' }}
           </ElCheckbox>
-          <div v-if="group.relation" class="designer-field-tree__generator-relation">
+          <div
+            v-if="group.relation && !group.target"
+            class="designer-field-tree__generator-relation"
+          >
             <ElCheckbox
               :model-value="selectedRelationCodes.includes(group.relation.code)"
               @change="toggleGeneratedRelation(group.relation.code, Boolean($event))"
@@ -227,7 +228,7 @@ import type {
   DesignerDocument,
   DesignerField,
   DesignerGenerateLayoutRequest,
-  DesignerOneToManyRelation,
+  DesignerRelation,
   DesignerSemanticType,
   DesignerSourceMetadataIndex,
 } from '@daxiangme/form-core'
@@ -235,8 +236,12 @@ import type {
 defineOptions({ name: 'DesignerFieldTree' })
 
 interface DesignerFieldGroup {
+  id: string
+  level: number
+  path: string
+  target?: boolean
   entity: DesignerDataEntity
-  relation?: DesignerOneToManyRelation
+  relation?: DesignerRelation
   fields: DesignerField[]
 }
 
@@ -249,7 +254,7 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{
   select: [fieldId: string]
-  restore: [fieldId: string]
+  restore: [fieldId: string, relationCode?: string]
   delete: [fieldId: string]
   'create-relation': [relationCode: string, componentType: 'row-subtable' | 'block-subtable']
   'generate-layout': [request: DesignerGenerateLayoutRequest]
@@ -262,15 +267,51 @@ const selectedRelationCodes = ref<string[]>([])
 const relationComponentTypes = reactive<Record<string, 'row-subtable' | 'block-subtable'>>({})
 
 const groups = computed<DesignerFieldGroup[]>(() => {
-  const root = props.document.dataSchema.rootEntity
-  return [
-    { entity: root, fields: fieldsForEntity(root.code) },
-    ...props.document.dataSchema.relations.map((relation) => ({
+  const document = props.document
+  const root = document.dataSchema.rootEntity
+  const result: DesignerFieldGroup[] = [
+    { id: root.id, entity: root, fields: fieldsForEntity(root.code), level: 0, path: root.name },
+  ]
+  const visited = new Set<string>()
+  const visit = (entityId: string, path: string, level: number): void => {
+    for (const relation of document.dataSchema.relations.filter(
+      (item) => item.parentEntityId === entityId,
+    )) {
+      if (visited.has(relation.id)) continue
+      visited.add(relation.id)
+      const relationPath = `${path} / ${relation.name}`
+      result.push({
+        id: relation.id,
+        entity: relation.childEntity,
+        relation,
+        fields: fieldsForEntity(relation.childEntity.code),
+        level,
+        path: relationPath,
+      })
+      if (relation.kind === 'MANY_TO_MANY')
+        result.push({
+          id: `${relation.id}:target`,
+          entity: relation.targetEntity,
+          relation,
+          target: true,
+          fields: fieldsForEntity(relation.targetEntity.code),
+          level: level + 1,
+          path: `${relationPath} / 共享目标`,
+        })
+      visit(relation.childEntity.id, relationPath, level + 1)
+    }
+  }
+  visit(root.id, root.name, 1)
+  for (const relation of document.dataSchema.relations.filter((item) => !visited.has(item.id)))
+    result.push({
+      id: relation.id,
       entity: relation.childEntity,
       relation,
       fields: fieldsForEntity(relation.childEntity.code),
-    })),
-  ]
+      level: 0,
+      path: `未放置父上下文 / ${relation.name}`,
+    })
+  return result
 })
 const filteredGroups = computed(() => {
   const query = keyword.value.trim().toLowerCase()
@@ -309,7 +350,7 @@ watch(
   groups,
   (items) => {
     items.forEach((group) => {
-      if (!(group.entity.id in expandedGroups)) expandedGroups[group.entity.id] = true
+      if (!(group.id in expandedGroups)) expandedGroups[group.id] = true
       if (group.relation && !relationComponentTypes[group.relation.code]) {
         relationComponentTypes[group.relation.code] = 'row-subtable'
       }
@@ -317,6 +358,29 @@ watch(
   },
   { immediate: true },
 )
+
+function findRelationContainer(
+  nodes: DesignerDocument['uiSchema']['root'],
+  code: string,
+): Extract<DesignerDocument['uiSchema']['root'][number], { nodeType: 'CONTAINER' }> | undefined {
+  for (const node of nodes) {
+    if (node.nodeType !== 'CONTAINER') continue
+    if (node.configuration.relationCode === code) return node
+    for (const slot of node.slots) {
+      const found = findRelationContainer(slot.children, code)
+      if (found) return found
+    }
+  }
+  return undefined
+}
+
+function containsField(nodes: DesignerDocument['uiSchema']['root'], fieldId: string): boolean {
+  return nodes.some((node) =>
+    node.nodeType === 'FIELD'
+      ? node.fieldId === fieldId
+      : node.slots.some((slot) => containsField(slot.children, fieldId)),
+  )
+}
 
 function fieldsForEntity(entityCode: string): DesignerField[] {
   return props.document.dataSchema.fields
@@ -326,13 +390,33 @@ function fieldsForEntity(entityCode: string): DesignerField[] {
 
 function generationFields(group: DesignerFieldGroup): DesignerField[] {
   return group.fields.filter(
-    (field) => !props.placedFieldIds.has(field.id) && !field.primaryKey && !field.systemField,
+    (field) =>
+      !field.primaryKey &&
+      !field.systemField &&
+      (group.relation
+        ? !containsField(
+            findRelationContainer(props.document.uiSchema.root, group.relation.code)?.slots.flatMap(
+              (slot) => slot.children,
+            ) ?? [],
+            field.id,
+          )
+        : !props.placedFieldIds.has(field.id)),
   )
 }
 
-function canRestoreField(field: DesignerField, relation?: DesignerOneToManyRelation): boolean {
-  if (props.placedFieldIds.has(field.id) || field.primaryKey || field.systemField) return false
-  return !relation || props.placedRelationCodes.has(relation.code)
+function canRestoreField(field: DesignerField, relation?: DesignerRelation): boolean {
+  if (field.primaryKey || field.systemField) return false
+  if (relation) {
+    const container = findRelationContainer(props.document.uiSchema.root, relation.code)
+    return Boolean(
+      container &&
+      !containsField(
+        container.slots.flatMap((slot) => slot.children),
+        field.id,
+      ),
+    )
+  }
+  return !props.placedFieldIds.has(field.id)
 }
 
 function canDeleteField(field: DesignerField): boolean {
@@ -347,14 +431,19 @@ function openGenerator(): void {
   selectedFieldIds.value = groups.value.flatMap((group) =>
     generationFields(group).map((field) => field.id),
   )
-  selectedRelationCodes.value = groups.value
-    .filter(
-      (group) =>
-        group.relation &&
-        !props.placedRelationCodes.has(group.relation.code) &&
-        generationFields(group).length > 0,
-    )
-    .map((group) => group.relation!.code)
+  selectedRelationCodes.value = [
+    ...new Set(
+      groups.value
+        .filter(
+          (group) =>
+            group.relation &&
+            !group.target &&
+            !props.placedRelationCodes.has(group.relation.code) &&
+            generationFields(group).length > 0,
+        )
+        .map((group) => group.relation!.code),
+    ),
+  ]
   generatorVisible.value = true
 }
 
@@ -388,7 +477,14 @@ function toggleGeneratedGroup(group: DesignerFieldGroup, selected: boolean): voi
 function confirmGenerate(): void {
   emit('generate-layout', {
     fieldIds: [...selectedFieldIds.value],
-    relations: selectedRelationCodes.value.map((relationCode) => ({
+    fieldPlacements: groups.value.flatMap((group) =>
+      group.relation
+        ? generationFields(group)
+            .filter((field) => selectedFieldIds.value.includes(field.id))
+            .map((field) => ({ fieldId: field.id, relationCode: group.relation!.code }))
+        : [],
+    ),
+    relations: [...new Set(selectedRelationCodes.value)].map((relationCode) => ({
       relationCode,
       componentType: relationComponentTypes[relationCode] ?? 'row-subtable',
     })),

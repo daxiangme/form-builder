@@ -1,5 +1,13 @@
 # el-form-gen
 
+## 0.3 关系表单
+
+关系运行能力支持嵌套子表、完整父行作用域、多对多选择和共享目标实体的独立授权编辑。关联记录与共享目标分别保存身份和字段，解除一处关联不会删除目标或影响另一父行的关联。
+
+宿主继续传入 `fieldRuntimePolicy`，并对关系集合、具体行、目标字段及每种操作明确授权。运行会话持有基线和编辑意图；保存成功消费完整回执，冲突或拒绝保留输入。普通 `submit` 表示生成前端投影，不代表宿主持久化成功。
+
+从 0.2 升级时，旧平面 `collections` 与预览 `rowId` 需要明确迁移，不要把持久身份或子集合塞进字段 `values`。宿主仍只安装主包，三个发布包使用一致的新版本。完整 Adapter、权限、保存及迁移说明见[关系接入文档](https://github.com/daxiangme/form-builder/blob/main/docs/relations.md)。
+
 > Visual Form Designer and Runtime Renderer for Vue 3 + Element Plus
 
 `el-form-gen` 是 Form Gen 的唯一推荐使用入口，提供可嵌入的拖拽式设计器、Schema 驱动运行渲染器、弹窗与抽屉模块、字段规则和声明式事件流。**Form Gen** 包含设计器与运行渲染器，不表示代码生成。
@@ -137,7 +145,7 @@ function handleSubmit(projection: DesignerSubmissionProjection) {
 
 ## 模块、规则与事件
 
-主表单、弹窗与抽屉共用同一份 `DesignerDocument 1.0`。字段高级配置集中管理状态条件、公式与联动、验证规则、提交策略和组件事件；事件使用可视化步骤与条件分支表达。
+主表单、弹窗与抽屉共用同一份设计文档。新关系文档使用 `documentVersion: '2.0'`，旧 `1.0` 文档可通过 `migrateDesignerDocument` 保留原 ID 迁移。字段高级配置集中管理状态条件、公式与联动、验证规则、提交策略和组件事件；事件使用可视化步骤与条件分支表达。
 
 ![弹窗与抽屉模块设计](https://raw.githubusercontent.com/daxiangme/form-builder/v0.1.1/docs/assets/screenshots/overlay-module-designer.png)
 

@@ -4,13 +4,14 @@ import type {
   DesignerDataEntity,
   DesignerDiagnostic,
   DesignerDocument,
+  DesignerDocumentLimits,
   DesignerField,
   DesignerFieldNode,
   DesignerInitialDataModel,
   DesignerInitialEntity,
   DesignerInitialField,
   DesignerLayoutNode,
-  DesignerOneToManyRelation,
+  DesignerRelation,
   DesignerRelationPatch,
   DesignerRootEntityPatch,
   DesignerSourceMetadataIndex,
@@ -31,12 +32,10 @@ export interface DesignerDataModelPreparation {
 
 /** 创建只包含本地主实体的数据模型目录。 */
 export function createLocalDesignerDataSchema(name: string): DesignerDocument['dataSchema'] {
+  const rootEntity = { id: createProtocolId('entity'), code: 'main', name: name || '主实体' }
   return {
-    rootEntity: {
-      id: createProtocolId('entity'),
-      code: 'main',
-      name: name || '主实体',
-    },
+    rootEntity,
+    entities: [rootEntity],
     relations: [],
     fields: [],
   }
@@ -51,12 +50,18 @@ export function normalizeDesignerDataModel(document: DesignerDocument): void {
   const schema = document.dataSchema as DesignerDocument['dataSchema'] | undefined
   if (!schema || !Array.isArray(schema.fields)) return
   const rawSchema = schema as unknown as Record<string, unknown>
+  const legacy = String(document.documentVersion) === '1.0'
+  if (!legacy) return
   if (!('rootEntity' in rawSchema)) {
     schema.rootEntity = createLocalDesignerDataSchema(document.name).rootEntity
   }
   if (!('relations' in rawSchema)) schema.relations = []
   const relations = Array.isArray(schema.relations) ? schema.relations : []
-  const validRelations = relations.filter(isOneToManyRelation)
+  for (const relation of relations) {
+    if (isPlainRecord(relation) && !('kind' in relation))
+      Object.assign(relation, { kind: 'ONE_TO_MANY' })
+  }
+  const validRelations = relations.filter(isDesignerRelation)
   validRelations.forEach((relation) => {
     if (!relation.loadMode) relation.loadMode = 'SYNC'
   })
@@ -93,6 +98,7 @@ export function normalizeDesignerDataModel(document: DesignerDocument): void {
         relationSerial += 1
       const childCode = nextChildEntityCode(entityCodes, relationSerial)
       relation = {
+        kind: 'ONE_TO_MANY',
         id: createProtocolId('relation'),
         code: relationCode,
         name: relationTitle(node) || `明细关系 ${relationSerial}`,
@@ -120,6 +126,36 @@ export function normalizeDesignerDataModel(document: DesignerDocument): void {
       }
     }
   })
+  if (!('entities' in rawSchema)) {
+    schema.entities = [
+      ...new Map(
+        [
+          schema.rootEntity,
+          ...validRelations.flatMap((relation) =>
+            relation.kind === 'MANY_TO_MANY'
+              ? [relation.childEntity, relation.targetEntity]
+              : [relation.childEntity],
+          ),
+        ].map((entity) => [entity.id, entity]),
+      ).values(),
+    ]
+  }
+  for (const overlay of document.uiSchema.overlays ?? []) {
+    if (overlay.dataContext !== 'SUBTABLE_ROW_DRAFT' || overlay.contextEntityId) continue
+    const codes = new Set<string>()
+    const visit = (nodes: DesignerLayoutNode[]): void => {
+      for (const node of nodes) {
+        if (node.nodeType === 'FIELD') {
+          const field = schema.fields.find((item) => item.id === node.fieldId)
+          if (field) codes.add(field.entityCode)
+        } else if (!SUBTABLE_COMPONENT_TYPES.has(node.componentType))
+          node.slots.forEach((slot) => visit(slot.children))
+      }
+    }
+    visit(overlay.root)
+    if (codes.size === 1)
+      overlay.contextEntityId = schema.entities.find((entity) => entity.code === [...codes][0])?.id
+  }
 }
 
 /**
@@ -133,6 +169,7 @@ export function prepareDesignerDataModel(
 ): DesignerDataModelPreparation {
   const document = cloneDocument(source)
   normalizeDesignerDataModel(document)
+  if (String(document.documentVersion) === '1.0') document.documentVersion = '2.0'
   if (!initialDataModel) {
     return {
       document,
@@ -164,7 +201,8 @@ export function prepareDesignerDataModel(
 export function ensureDesignerSubtableRelation(
   document: DesignerDocument,
   node: Extract<DesignerLayoutNode, { nodeType: 'CONTAINER' }>,
-): DesignerOneToManyRelation | undefined {
+  parentEntityCode = document.dataSchema.rootEntity.code,
+): DesignerRelation | undefined {
   if (!SUBTABLE_COMPONENT_TYPES.has(node.componentType)) return undefined
   const configuredCode =
     typeof node.configuration.relationCode === 'string' ? node.configuration.relationCode : ''
@@ -175,17 +213,19 @@ export function ensureDesignerSubtableRelation(
     node.configurationVersion = 3
     return existing
   }
+  const parentEntity = document.dataSchema.entities.find(
+    (entity) => entity.code === parentEntityCode,
+  )
+  if (!parentEntity) return undefined
   const relationSerial = nextRelationSerial(document)
   const relationCodes = new Set(document.dataSchema.relations.map((relation) => relation.code))
-  const entityCodes = new Set([
-    document.dataSchema.rootEntity.code,
-    ...document.dataSchema.relations.map((relation) => relation.childEntity.code),
-  ])
-  const relation: DesignerOneToManyRelation = {
+  const entityCodes = new Set(document.dataSchema.entities.map((entity) => entity.code))
+  const relation: DesignerRelation = {
+    kind: 'ONE_TO_MANY',
     id: createProtocolId('relation'),
-    code: nextRelationCode(document.dataSchema.rootEntity.code, relationCodes, relationSerial),
+    code: nextRelationCode(parentEntity.code, relationCodes, relationSerial),
     name: relationTitle(node) || `明细关系 ${relationSerial}`,
-    parentEntityId: document.dataSchema.rootEntity.id,
+    parentEntityId: parentEntity.id,
     childEntity: {
       id: createProtocolId('entity'),
       code: nextChildEntityCode(entityCodes, relationSerial),
@@ -194,6 +234,7 @@ export function ensureDesignerSubtableRelation(
     loadMode: 'SYNC',
   }
   document.dataSchema.relations.push(relation)
+  document.dataSchema.entities.push(relation.childEntity)
   node.configuration = { ...node.configuration, relationCode: relation.code }
   node.configurationVersion = 3
   return relation
@@ -206,30 +247,51 @@ export function duplicateDesignerSubtableRelation(
   copy: Extract<DesignerLayoutNode, { nodeType: 'CONTAINER' }>,
 ): void {
   if (!SUBTABLE_COMPONENT_TYPES.has(copy.componentType)) return
-  const sourceCode =
-    typeof source.configuration.relationCode === 'string' ? source.configuration.relationCode : ''
   const sourceRelation = document.dataSchema.relations.find(
-    (relation) => relation.code === sourceCode,
+    (relation) => relation.code === source.configuration.relationCode,
+  )
+  const parent = document.dataSchema.entities.find(
+    (entity) => entity.id === sourceRelation?.parentEntityId,
   )
   copy.configuration = { ...copy.configuration, relationCode: '' }
-  const relation = ensureDesignerSubtableRelation(document, copy)
+  const relation = ensureDesignerSubtableRelation(document, copy, parent?.code)
   if (!relation) return
   if (sourceRelation) {
     relation.name = `${sourceRelation.name}副本`
     relation.childEntity.name = `${sourceRelation.childEntity.name}副本`
-  }
-  for (const slot of copy.slots) {
-    for (const child of slot.children) {
-      if (child.nodeType !== 'FIELD') continue
-      const field = document.dataSchema.fields.find((item) => item.id === child.fieldId)
-      if (!field) continue
-      field.entityCode = relation.childEntity.code
-      field.bindingStatus = 'UNBOUND'
-      field.primaryKey = false
-      field.systemField = false
-      delete field.binding
+    if (sourceRelation.kind === 'MANY_TO_MANY') {
+      document.dataSchema.relations.splice(document.dataSchema.relations.indexOf(relation), 1, {
+        ...relation,
+        kind: 'MANY_TO_MANY',
+        targetEntity: sourceRelation.targetEntity,
+      })
     }
   }
+  const reparent = (nodes: DesignerLayoutNode[]): void => {
+    for (const child of nodes) {
+      if (child.nodeType === 'FIELD') {
+        const field = document.dataSchema.fields.find((item) => item.id === child.fieldId)
+        if (
+          !field ||
+          (sourceRelation?.kind === 'MANY_TO_MANY' &&
+            field.entityCode === sourceRelation.targetEntity.code)
+        )
+          continue
+        field.entityCode = relation.childEntity.code
+        field.bindingStatus = 'UNBOUND'
+        field.primaryKey = false
+        field.systemField = false
+        delete field.binding
+      } else if (SUBTABLE_COMPONENT_TYPES.has(child.componentType)) {
+        const nested = document.dataSchema.relations.find(
+          (item) => item.code === child.configuration.relationCode,
+        )
+        if (nested) nested.parentEntityId = relation.childEntity.id
+      } else child.slots.forEach((slot) => reparent(slot.children))
+    }
+  }
+  copy.slots.forEach((slot) => reparent(slot.children))
+  synchronizeEntityReferences(document, relation.childEntity)
 }
 
 /** 返回目标落点对应的数据实体编码。 */
@@ -238,16 +300,26 @@ export function resolveDesignerTargetEntityCode(
   containerId: string | null,
 ): string | undefined {
   if (!containerId) return document.dataSchema.rootEntity.code
-  const container = findNode(document.uiSchema.root, containerId)
-  if (!container || container.nodeType !== 'CONTAINER') return undefined
-  if (!SUBTABLE_COMPONENT_TYPES.has(container.componentType))
-    return document.dataSchema.rootEntity.code
-  const relationCode =
-    typeof container.configuration.relationCode === 'string'
-      ? container.configuration.relationCode
-      : ''
-  return document.dataSchema.relations.find((relation) => relation.code === relationCode)
-    ?.childEntity.code
+  const visit = (nodes: DesignerLayoutNode[], entityCode: string): string | undefined => {
+    for (const node of nodes) {
+      if (node.nodeType !== 'CONTAINER') continue
+      let currentCode = entityCode
+      if (SUBTABLE_COMPONENT_TYPES.has(node.componentType)) {
+        const relation = document.dataSchema.relations.find(
+          (item) => item.code === node.configuration.relationCode,
+        )
+        if (!relation) continue
+        currentCode = relation.childEntity.code
+      }
+      if (node.id === containerId) return currentCode
+      for (const slot of node.slots) {
+        const found = visit(slot.children, currentCode)
+        if (found) return found
+      }
+    }
+    return undefined
+  }
+  return visit(document.uiSchema.root, document.dataSchema.rootEntity.code)
 }
 
 /** 校验字段从当前实体作用域移动到目标作用域是否被允许。 */
@@ -258,7 +330,8 @@ export function designerFieldScopeDropRejection(
 ): string {
   const targetEntityCode = resolveDesignerTargetEntityCode(document, targetContainerId)
   if (!targetEntityCode) return '目标子表尚未绑定有效关系'
-  if (field.entityCode === targetEntityCode) return ''
+  if (resolveDesignerTargetEntityCodes(document, targetContainerId).includes(field.entityCode))
+    return ''
   return `字段属于实体 ${field.entityCode}，不能放入实体 ${targetEntityCode} 的布局`
 }
 
@@ -299,8 +372,9 @@ export function findSubtableNodeByRelationCode(
 export function placeDesignerDataField(
   document: DesignerDocument,
   fieldId: string,
+  relationCode?: string,
 ): DesignerFieldNode | undefined {
-  if (isFieldPlaced(document.uiSchema.root, fieldId)) return undefined
+  if (!relationCode && isFieldPlaced(document.uiSchema.root, fieldId)) return undefined
   const field = document.dataSchema.fields.find((item) => item.id === fieldId)
   if (!field) return undefined
   const registration = findDesignerComponent(field.componentType)
@@ -330,18 +404,24 @@ export function placeDesignerDataField(
       },
     },
   }
-  if (field.entityCode === document.dataSchema.rootEntity.code) {
+  if (!relationCode && field.entityCode === document.dataSchema.rootEntity.code) {
     document.uiSchema.root.push(node)
     return node
   }
-  const relation = document.dataSchema.relations.find(
-    (item) => item.childEntity.code === field.entityCode,
-  )
-  const container = relation
-    ? findSubtableNodeByRelationCode(document.uiSchema.root, relation.code)
-    : undefined
+  const candidates = document.dataSchema.relations
+    .filter(
+      (item) =>
+        (!relationCode || item.code === relationCode) &&
+        (item.childEntity.code === field.entityCode ||
+          (item.kind === 'MANY_TO_MANY' && item.targetEntity.code === field.entityCode)),
+    )
+    .flatMap((relation) => {
+      const container = findSubtableNodeByRelationCode(document.uiSchema.root, relation.code)
+      return container ? [container] : []
+    })
+  const container = candidates.length === 1 ? candidates[0] : undefined
   const content = container?.slots.find((slot) => slot.slotCode === 'content')
-  if (!content) return undefined
+  if (!content || isFieldPlaced(content.children, fieldId)) return undefined
   content.children.push(node)
   return node
 }
@@ -354,7 +434,9 @@ export function updateDesignerRootEntity(
   const root = document.dataSchema.rootEntity
   const nextCode = patch.code ?? root.code
   if (!DESIGNER_IDENTIFIER_PATTERN.test(nextCode)) return '主实体编码格式不正确'
-  if (document.dataSchema.relations.some((relation) => relation.childEntity.code === nextCode)) {
+  if (
+    document.dataSchema.entities.some((entity) => entity.id !== root.id && entity.code === nextCode)
+  ) {
     return '主实体编码不能与子实体编码重复'
   }
   if (patch.name !== undefined && !patch.name.trim()) return '主实体名称不能为空'
@@ -366,6 +448,7 @@ export function updateDesignerRootEntity(
       if (field.entityCode === previousCode) field.entityCode = nextCode
     })
   }
+  synchronizeEntityReferences(document, root)
   return ''
 }
 
@@ -389,9 +472,8 @@ export function updateDesignerRelation(
     return '关系编码不能重复'
   }
   if (
-    nextChildCode === document.dataSchema.rootEntity.code ||
-    document.dataSchema.relations.some(
-      (item) => item.id !== relation.id && item.childEntity.code === nextChildCode,
+    document.dataSchema.entities.some(
+      (entity) => entity.id !== relation.childEntity.id && entity.code === nextChildCode,
     )
   ) {
     return '子实体编码不能与其他实体重复'
@@ -399,31 +481,104 @@ export function updateDesignerRelation(
   if (patch.name !== undefined && !patch.name.trim()) return '关系名称不能为空'
   if (patch.childEntityName !== undefined && !patch.childEntityName.trim())
     return '子实体名称不能为空'
+  const nextKind = patch.kind ?? relation.kind
+  const newTarget = patch.createTargetEntity
+  if (
+    newTarget &&
+    (!DESIGNER_IDENTIFIER_PATTERN.test(newTarget.code) ||
+      !newTarget.name.trim() ||
+      document.dataSchema.entities.some((entity) => entity.code === newTarget.code))
+  )
+    return '共享实体名称或编码无效，编码必须唯一'
+  const target = newTarget
+    ? { id: createProtocolId('entity'), code: newTarget.code, name: newTarget.name.trim() }
+    : patch.targetEntityId
+      ? document.dataSchema.entities.find((entity) => entity.id === patch.targetEntityId)
+      : relation.kind === 'MANY_TO_MANY'
+        ? relation.targetEntity
+        : undefined
+  if (nextKind === 'MANY_TO_MANY' && (!target || target.id === relation.childEntity.id))
+    return '请选择与关联记录不同的有效共享目标实体'
+  if (
+    relation.kind === 'MANY_TO_MANY' &&
+    (nextKind !== 'MANY_TO_MANY' || target?.id !== relation.targetEntity.id)
+  ) {
+    const oldTargetCode = relation.targetEntity.code
+    let hasTargetLayout = false
+    for (const root of [
+      document.uiSchema.root,
+      ...document.uiSchema.overlays.map((overlay) => overlay.root),
+    ])
+      walkNodes(root, (node) => {
+        if (node.nodeType !== 'CONTAINER' || node.configuration.relationCode !== relation.code)
+          return
+        const visit = (children: DesignerLayoutNode[]): void => {
+          for (const child of children) {
+            if (child.nodeType === 'FIELD') {
+              if (
+                document.dataSchema.fields.find((field) => field.id === child.fieldId)
+                  ?.entityCode === oldTargetCode
+              )
+                hasTargetLayout = true
+            } else if (!SUBTABLE_COMPONENT_TYPES.has(child.componentType))
+              child.slots.forEach((slot) => visit(slot.children))
+          }
+        }
+        node.slots.forEach((slot) => visit(slot.children))
+      })
+    if (hasTargetLayout) return '请先移除当前关系布局中的共享目标字段，再修改关系类型或目标实体'
+  }
   const previousRelationCode = relation.code
   const previousChildCode = relation.childEntity.code
   relation.code = nextRelationCode
   relation.childEntity.code = nextChildCode
   if (patch.name !== undefined) relation.name = patch.name.trim()
   if (patch.childEntityName !== undefined) relation.childEntity.name = patch.childEntityName.trim()
-  walkNodes(document.uiSchema.root, (node) => {
-    if (
-      node.nodeType === 'CONTAINER' &&
-      SUBTABLE_COMPONENT_TYPES.has(node.componentType) &&
-      node.configuration.relationCode === previousRelationCode
-    ) {
-      node.configuration.relationCode = nextRelationCode
-    }
-  })
+  for (const root of [
+    document.uiSchema.root,
+    ...document.uiSchema.overlays.map((overlay) => overlay.root),
+  ])
+    walkNodes(root, (node) => {
+      if (
+        node.nodeType === 'CONTAINER' &&
+        SUBTABLE_COMPONENT_TYPES.has(node.componentType) &&
+        node.configuration.relationCode === previousRelationCode
+      ) {
+        node.configuration.relationCode = nextRelationCode
+      }
+    })
   if (previousChildCode !== nextChildCode) {
     document.dataSchema.fields.forEach((field) => {
       if (field.entityCode === previousChildCode) field.entityCode = nextChildCode
     })
   }
+  synchronizeEntityReferences(document, relation.childEntity)
+  if (newTarget && target) document.dataSchema.entities.push(target)
+  const replacement: DesignerRelation =
+    nextKind === 'MANY_TO_MANY'
+      ? { ...relation, kind: 'MANY_TO_MANY', targetEntity: target! }
+      : {
+          id: relation.id,
+          code: relation.code,
+          name: relation.name,
+          parentEntityId: relation.parentEntityId,
+          childEntity: relation.childEntity,
+          loadMode: relation.loadMode,
+          kind: 'ONE_TO_MANY',
+        }
+  document.dataSchema.relations.splice(
+    document.dataSchema.relations.indexOf(relation),
+    1,
+    replacement,
+  )
   return ''
 }
 
 /** 对持久化数据模型目录执行实体、关系和字段作用域诊断。 */
-export function diagnoseDesignerDataModel(document: DesignerDocument): DesignerDiagnostic[] {
+export function diagnoseDesignerDataModel(
+  document: DesignerDocument,
+  limits: DesignerDocumentLimits = {},
+): DesignerDiagnostic[] {
   const diagnostics: DesignerDiagnostic[] = []
   const schema = document.dataSchema
   pushUnknownProperties(
@@ -458,51 +613,90 @@ export function diagnoseDesignerDataModel(document: DesignerDocument): DesignerD
   }
   const relationIds = new Set<string>()
   const relationCodes = new Set<string>()
-  const entityIds = new Set<string>([schema.rootEntity.id])
-  const entityCodes = new Set<string>([schema.rootEntity.code])
-  for (const [index, rawRelation] of schema.relations.entries()) {
+  const entityIds = new Set<string>()
+  const entityCodes = new Set<string>()
+  const entities = Array.isArray(schema.entities) ? schema.entities : []
+  if (!Array.isArray(schema.entities))
+    diagnostics.push(
+      error('ENTITY_CATALOG', '2.0 文档必须提供规范实体目录', '$.dataSchema.entities'),
+    )
+  entities.forEach((entity, index) => {
+    const path = `$.dataSchema.entities[${index}]`
+    if (!isDataEntity(entity)) {
+      diagnostics.push(error('ENTITY_TYPE', '实体必须是完整语义对象', path))
+      return
+    }
+    pushUnknownProperties(entity, ['id', 'code', 'name'], path, diagnostics)
+    diagnoseEntity(entity, path, diagnostics)
+    if (entityIds.has(entity.id))
+      diagnostics.push(error('ENTITY_ID_DUPLICATE', '实体目录中 ID 不能重复', `${path}.id`))
+    if (entityCodes.has(entity.code))
+      diagnostics.push(error('ENTITY_CODE_DUPLICATE', '实体目录中编码不能重复', `${path}.code`))
+    entityIds.add(entity.id)
+    entityCodes.add(entity.code)
+  })
+  const checkReference = (entity: DesignerDataEntity, path: string): void => {
+    const canonical = entities.find((item) => item.id === entity.id)
+    if (!canonical || canonical.code !== entity.code || canonical.name !== entity.name)
+      diagnostics.push(
+        error('ENTITY_REFERENCE', '实体引用必须与规范目录中的身份、编码和名称一致', path),
+      )
+  }
+  checkReference(schema.rootEntity, '$.dataSchema.rootEntity')
+  for (const [index, relation] of schema.relations.entries()) {
     const path = `$.dataSchema.relations[${index}]`
-    if (!isOneToManyRelation(rawRelation)) {
-      diagnostics.push(error('RELATION_TYPE', '一级子表关系必须是完整对象', path))
+    if (!isDesignerRelation(relation)) {
+      diagnostics.push(error('RELATION_TYPE', '关系必须声明合法 kind 和完整实体引用', path))
       continue
     }
-    const relation = rawRelation
     pushUnknownProperties(
       relation,
-      ['id', 'code', 'name', 'parentEntityId', 'childEntity', 'loadMode'],
+      [
+        'id',
+        'code',
+        'name',
+        'parentEntityId',
+        'childEntity',
+        'loadMode',
+        'kind',
+        ...(relation.kind === 'MANY_TO_MANY' ? ['targetEntity'] : []),
+      ],
       path,
       diagnostics,
     )
+    if (!relation.id || relationIds.has(relation.id))
+      diagnostics.push(error('RELATION_ID', '关系主键为空或重复', `${path}.id`))
+    relationIds.add(relation.id)
+    if (!DESIGNER_IDENTIFIER_PATTERN.test(relation.code) || relationCodes.has(relation.code))
+      diagnostics.push(error('RELATION_CODE', '关系编码格式不正确或重复', `${path}.code`))
+    relationCodes.add(relation.code)
+    if (!relation.name) diagnostics.push(error('RELATION_NAME', '关系名称不能为空', `${path}.name`))
+    if (!entityIds.has(relation.parentEntityId))
+      diagnostics.push(
+        error('RELATION_PARENT', '关系父实体必须存在于实体目录', `${path}.parentEntityId`),
+      )
     pushUnknownProperties(
       relation.childEntity,
       ['id', 'code', 'name'],
       `${path}.childEntity`,
       diagnostics,
     )
-    if (!relation.id || relationIds.has(relation.id))
-      diagnostics.push(error('RELATION_ID', '关系主键为空或重复', `${path}.id`))
-    else relationIds.add(relation.id)
-    if (!DESIGNER_IDENTIFIER_PATTERN.test(relation.code) || relationCodes.has(relation.code)) {
-      diagnostics.push(error('RELATION_CODE', '关系编码格式不正确或重复', `${path}.code`))
-    } else relationCodes.add(relation.code)
-    if (!relation.name) diagnostics.push(error('RELATION_NAME', '关系名称不能为空', `${path}.name`))
-    if (relation.parentEntityId !== schema.rootEntity.id) {
-      diagnostics.push(
-        error('RELATION_PARENT', '一级子表的父实体必须是主实体', `${path}.parentEntityId`),
+    checkReference(relation.childEntity, `${path}.childEntity`)
+    if (relation.kind === 'MANY_TO_MANY') {
+      pushUnknownProperties(
+        relation.targetEntity,
+        ['id', 'code', 'name'],
+        `${path}.targetEntity`,
+        diagnostics,
       )
+      checkReference(relation.targetEntity, `${path}.targetEntity`)
+      if (relation.targetEntity.id === relation.childEntity.id)
+        diagnostics.push(
+          error('RELATION_TARGET', '关联实体与共享目标实体必须分开', `${path}.targetEntity`),
+        )
     }
-    diagnoseEntity(relation.childEntity, `${path}.childEntity`, diagnostics)
-    if (entityIds.has(relation.childEntity.id)) {
-      diagnostics.push(error('ENTITY_ID_DUPLICATE', '实体主键不能重复', `${path}.childEntity.id`))
-    } else entityIds.add(relation.childEntity.id)
-    if (entityCodes.has(relation.childEntity.code)) {
-      diagnostics.push(
-        error('ENTITY_CODE_DUPLICATE', '实体编码不能重复', `${path}.childEntity.code`),
-      )
-    } else entityCodes.add(relation.childEntity.code)
-    if (!['SYNC', 'ASYNC'].includes(relation.loadMode)) {
+    if (!['SYNC', 'ASYNC'].includes(relation.loadMode))
       diagnostics.push(error('RELATION_LOAD_MODE', '关系加载方式不正确', `${path}.loadMode`))
-    }
   }
   for (const [index, field] of schema.fields.entries()) {
     if (!entityCodes.has(field.entityCode)) {
@@ -515,7 +709,7 @@ export function diagnoseDesignerDataModel(document: DesignerDocument): DesignerD
       )
     }
   }
-  diagnoseLayoutDataScopes(document, diagnostics)
+  diagnoseLayoutDataScopes(document, diagnostics, limits.maxRelationDepth ?? 16)
   return diagnostics
 }
 
@@ -530,7 +724,11 @@ function applyInitialDataModel(
       sourceRevision: initial.sourceRevision,
     },
     rootEntity: toDataEntity(initial.rootEntity),
-    relations: initial.relations.map((relation) => ({
+    entities: initialEntityDirectory(initial).map(toDataEntity),
+    relations: initial.relations.map((relation): DesignerRelation => ({
+      ...(relation.kind === 'MANY_TO_MANY'
+        ? { kind: 'MANY_TO_MANY', targetEntity: toDataEntity(relation.targetEntity) }
+        : { kind: 'ONE_TO_MANY' }),
       id: relation.relationId,
       code: relation.relationCode,
       name: relation.relationName,
@@ -541,8 +739,7 @@ function applyInitialDataModel(
     fields: [],
   }
   document.dataSchema.fields.push(
-    ...createInitialFields(document, initial.rootEntity),
-    ...initial.relations.flatMap((relation) => createInitialFields(document, relation.childEntity)),
+    ...initialEntityDirectory(initial).flatMap((entity) => createInitialFields(document, entity)),
   )
 }
 
@@ -615,17 +812,9 @@ function buildSourceMetadataIndex(
     fields: {},
     relations: {},
   }
-  const initialEntities = [
-    initial.rootEntity,
-    ...initial.relations.map((relation) => relation.childEntity),
-  ]
+  const initialEntities = initialEntityDirectory(initial)
   for (const entity of initialEntities) {
-    const dataEntity =
-      document.dataSchema.rootEntity.id === entity.entityId
-        ? document.dataSchema.rootEntity
-        : document.dataSchema.relations.find(
-            (relation) => relation.childEntity.id === entity.entityId,
-          )?.childEntity
+    const dataEntity = document.dataSchema.entities.find((item) => item.id === entity.entityId)
     if (dataEntity) index.entities[dataEntity.id] = { physicalTableName: entity.physicalTableName }
     for (const initialField of entity.fields) {
       const field = document.dataSchema.fields.find(
@@ -687,13 +876,50 @@ function diagnoseInitialDataModel(initial: DesignerInitialDataModel): DesignerDi
   const entityIds = new Set<string>()
   const entityCodes = new Set<string>()
   const fieldIds = new Set<string>()
-  diagnoseInitialEntity(
+  if (initial.entities !== undefined && !Array.isArray(initial.entities))
+    return [
+      error('INITIAL_ENTITY_CATALOG', '首次实体目录必须是数组', '$.initialDataModel.entities'),
+    ]
+  const allEntities = initialEntityDirectory(initial)
+  const definitions = new Map<string, DesignerInitialEntity>()
+  const rawEntities = [
     initial.rootEntity,
-    '$.initialDataModel.rootEntity',
-    diagnostics,
-    entityIds,
-    entityCodes,
-    fieldIds,
+    ...(initial.entities ?? []),
+    ...initial.relations.flatMap((relation) =>
+      isInitialRelationShape(relation)
+        ? relation.kind === 'MANY_TO_MANY'
+          ? [relation.childEntity, relation.targetEntity]
+          : [relation.childEntity]
+        : [],
+    ),
+  ]
+  for (const entity of rawEntities) {
+    if (!isInitialEntityShape(entity)) {
+      diagnostics.push(
+        error('INITIAL_ENTITY_TYPE', '首次实体目录必须包含完整实体', '$.initialDataModel.entities'),
+      )
+      continue
+    }
+    const previous = definitions.get(entity.entityId)
+    if (previous && JSON.stringify(previous) !== JSON.stringify(entity))
+      diagnostics.push(
+        error(
+          'INITIAL_ENTITY_CONFLICT',
+          '同一实体 ID 的重复定义不一致',
+          '$.initialDataModel.entities',
+        ),
+      )
+    definitions.set(entity.entityId, entity)
+  }
+  allEntities.forEach((entity, index) =>
+    diagnoseInitialEntity(
+      entity,
+      `$.initialDataModel.entities[${index}]`,
+      diagnostics,
+      entityIds,
+      entityCodes,
+      fieldIds,
+    ),
   )
   const relationIds = new Set<string>()
   const relationCodes = new Set<string>()
@@ -716,25 +942,21 @@ function diagnoseInitialDataModel(initial: DesignerInitialDataModel): DesignerDi
     } else relationCodes.add(relation.relationCode)
     if (!relation.relationName)
       diagnostics.push(error('INITIAL_RELATION_NAME', '关系名称不能为空', `${path}.relationName`))
-    if (relation.parentEntityId !== initial.rootEntity.entityId) {
+    if (!entityIds.has(relation.parentEntityId)) {
       diagnostics.push(
-        error('INITIAL_RELATION_PARENT', '只允许主实体到一级子实体关系', `${path}.parentEntityId`),
+        error('INITIAL_RELATION_PARENT', '关系父实体必须存在于实体目录', `${path}.parentEntityId`),
       )
     }
-    diagnoseInitialEntity(
-      relation.childEntity,
-      `${path}.childEntity`,
-      diagnostics,
-      entityIds,
-      entityCodes,
-      fieldIds,
-    )
     if (relation.loadMode !== undefined && !['SYNC', 'ASYNC'].includes(relation.loadMode)) {
       diagnostics.push(
         error('INITIAL_RELATION_LOAD_MODE', '关系加载方式不正确', `${path}.loadMode`),
       )
     }
-    const parentFieldIds = new Set(initial.rootEntity.fields.map((field) => field.fieldId))
+    const parentFieldIds = new Set(
+      allEntities
+        .find((entity) => entity.entityId === relation.parentEntityId)
+        ?.fields.map((field) => field.fieldId) ?? [],
+    )
     const childFieldIds = new Set(relation.childEntity.fields.map((field) => field.fieldId))
     const keyMappings = Array.isArray(relation.keyMappings) ? relation.keyMappings : []
     if (relation.keyMappings !== undefined && !Array.isArray(relation.keyMappings)) {
@@ -752,7 +974,7 @@ function diagnoseInitialDataModel(initial: DesignerInitialDataModel): DesignerDi
         diagnostics.push(
           error(
             'INITIAL_RELATION_PARENT_FIELD',
-            '键映射引用了不存在的主实体字段',
+            '键映射引用了不存在的父实体字段',
             `${mappingPath}.parentFieldId`,
           ),
         )
@@ -825,29 +1047,37 @@ function diagnoseInitialEntity(
 function diagnoseLayoutDataScopes(
   document: DesignerDocument,
   diagnostics: DesignerDiagnostic[],
+  maxDepth: number,
 ): void {
-  const relationUsage = new Set<string>()
-  const relations = document.dataSchema.relations.filter(isOneToManyRelation)
-  const visit = (nodes: DesignerLayoutNode[], entityCode: string, path: string): void => {
+  const relations = document.dataSchema.relations.filter(isDesignerRelation)
+  const visit = (
+    nodes: DesignerLayoutNode[],
+    entityId: string,
+    path: string,
+    chain: string[],
+    used: Set<string>,
+    targetCode?: string,
+  ): void => {
     nodes.forEach((node, index) => {
       const nodePath = `${path}[${index}]`
+      const entity = document.dataSchema.entities?.find((item) => item.id === entityId)
       if (node.nodeType === 'FIELD') {
         const field = document.dataSchema.fields.find((item) => item.id === node.fieldId)
-        if (field && field.entityCode !== entityCode) {
+        if (field && field.entityCode !== entity?.code && field.entityCode !== targetCode)
           diagnostics.push(
             error(
               'FIELD_ENTITY_SCOPE',
-              `字段属于 ${field.entityCode}，当前布局作用域为 ${entityCode}`,
+              `字段属于 ${field.entityCode}，当前布局作用域为 ${entity?.code ?? '未知实体'}`,
               nodePath,
             ),
           )
-        }
         return
       }
+      let childEntityId = entityId
+      let childTargetCode = targetCode
+      let childChain = chain
       if (SUBTABLE_COMPONENT_TYPES.has(node.componentType)) {
-        const relationCode =
-          typeof node.configuration.relationCode === 'string' ? node.configuration.relationCode : ''
-        const relation = relations.find((item) => item.code === relationCode)
+        const relation = relations.find((item) => item.code === node.configuration.relationCode)
         if (!relation) {
           diagnostics.push(
             error(
@@ -858,31 +1088,63 @@ function diagnoseLayoutDataScopes(
           )
           return
         }
-        if (relationUsage.has(relation.code)) {
+        if (relation.parentEntityId !== entityId)
           diagnostics.push(
             error(
-              'SUBTABLE_RELATION_DUPLICATE',
-              '同一关系不能绑定两个可写子表',
+              'SUBTABLE_RELATION_PARENT',
+              '子表关系的父实体与当前布局作用域不一致',
               `${nodePath}.configuration.relationCode`,
             ),
           )
+        const usageKey = JSON.stringify([...chain, relation.id])
+        if (used.has(usageKey))
+          diagnostics.push(
+            error(
+              'SUBTABLE_RELATION_DUPLICATE',
+              '同一父行作用域不能绑定两个可写关系容器',
+              nodePath,
+            ),
+          )
+        used.add(usageKey)
+        childChain = [...chain, relation.id]
+        if (childChain.length > maxDepth) {
+          diagnostics.push(error('RELATION_DEPTH', `关系嵌套不能超过 ${maxDepth} 层`, nodePath))
+          return
         }
-        relationUsage.add(relation.code)
-        node.slots.forEach((slot, slotIndex) =>
-          visit(
-            slot.children,
-            relation.childEntity.code,
-            `${nodePath}.slots[${slotIndex}].children`,
-          ),
-        )
-        return
+        childEntityId = relation.childEntity.id
+        childTargetCode = relation.kind === 'MANY_TO_MANY' ? relation.targetEntity.code : undefined
       }
       node.slots.forEach((slot, slotIndex) =>
-        visit(slot.children, entityCode, `${nodePath}.slots[${slotIndex}].children`),
+        visit(
+          slot.children,
+          childEntityId,
+          `${nodePath}.slots[${slotIndex}].children`,
+          childChain,
+          used,
+          childTargetCode,
+        ),
       )
     })
   }
-  visit(document.uiSchema.root, document.dataSchema.rootEntity.code, '$.uiSchema.root')
+  visit(document.uiSchema.root, document.dataSchema.rootEntity.id, '$.uiSchema.root', [], new Set())
+  for (const [index, overlay] of document.uiSchema.overlays.entries()) {
+    const entityId =
+      overlay.dataContext === 'SUBTABLE_ROW_DRAFT'
+        ? overlay.contextEntityId
+        : document.dataSchema.rootEntity.id
+    if (!entityId || !document.dataSchema.entities?.some((entity) => entity.id === entityId)) {
+      if (overlay.root.length > 0)
+        diagnostics.push(
+          error(
+            'OVERLAY_ENTITY_CONTEXT',
+            '行草稿必须选择存在的实体上下文',
+            `$.uiSchema.overlays[${index}].contextEntityId`,
+          ),
+        )
+      continue
+    }
+    visit(overlay.root, entityId, `$.uiSchema.overlays[${index}].root`, [], new Set())
+  }
 }
 
 function diagnoseEntity(
@@ -932,18 +1194,6 @@ function relationTitle(node: Extract<DesignerLayoutNode, { nodeType: 'CONTAINER'
 
 function toDataEntity(entity: DesignerInitialEntity): DesignerDataEntity {
   return { id: entity.entityId, code: entity.entityCode, name: entity.entityName }
-}
-
-function findNode(nodes: DesignerLayoutNode[], nodeId: string): DesignerLayoutNode | undefined {
-  for (const node of nodes) {
-    if (node.id === nodeId) return node
-    if (node.nodeType !== 'CONTAINER') continue
-    for (const slot of node.slots) {
-      const found = findNode(slot.children, nodeId)
-      if (found) return found
-    }
-  }
-  return undefined
 }
 
 function isFieldPlaced(nodes: DesignerLayoutNode[], fieldId: string): boolean {
@@ -1010,17 +1260,25 @@ function isInitialEntityShape(value: unknown): value is DesignerInitialEntity {
 function isInitialRelationShape(
   value: unknown,
 ): value is DesignerInitialDataModel['relations'][number] {
-  return isPlainRecord(value) && isInitialEntityShape(value.childEntity)
+  return (
+    isPlainRecord(value) &&
+    isInitialEntityShape(value.childEntity) &&
+    (value.kind === undefined ||
+      value.kind === 'ONE_TO_MANY' ||
+      (value.kind === 'MANY_TO_MANY' && isInitialEntityShape(value.targetEntity)))
+  )
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-function isOneToManyRelation(value: unknown): value is DesignerOneToManyRelation {
+function isDesignerRelation(value: unknown): value is DesignerRelation {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
   const relation = value as Record<string, unknown>
   return (
+    (relation.kind === 'ONE_TO_MANY' ||
+      (relation.kind === 'MANY_TO_MANY' && isDataEntity(relation.targetEntity))) &&
     typeof relation.id === 'string' &&
     typeof relation.code === 'string' &&
     typeof relation.name === 'string' &&
@@ -1043,4 +1301,71 @@ function createProtocolId(prefix: string): string {
       ? crypto.randomUUID().replaceAll('-', '')
       : `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`
   return `${prefix}-${random}`
+}
+
+/** 从首次参数归并实体，重复定义由参数诊断另行核对。 */
+function initialEntityDirectory(initial: DesignerInitialDataModel): DesignerInitialEntity[] {
+  const entries = [
+    initial.rootEntity,
+    ...(Array.isArray(initial.entities) ? initial.entities : []),
+    ...initial.relations.flatMap((relation) =>
+      isInitialRelationShape(relation)
+        ? relation.kind === 'MANY_TO_MANY'
+          ? [relation.childEntity, relation.targetEntity]
+          : [relation.childEntity]
+        : [],
+    ),
+  ]
+  return [
+    ...new Map(
+      entries.filter(isInitialEntityShape).map((entity) => [entity.entityId, entity]),
+    ).values(),
+  ]
+}
+
+/** 同步规范实体目录及所有关系引用，避免编辑编码后留下分叉副本。 */
+function synchronizeEntityReferences(document: DesignerDocument, entity: DesignerDataEntity): void {
+  const schema = document.dataSchema
+  for (const candidate of [
+    schema.rootEntity,
+    ...schema.entities,
+    ...schema.relations.flatMap((relation) =>
+      relation.kind === 'MANY_TO_MANY'
+        ? [relation.childEntity, relation.targetEntity]
+        : [relation.childEntity],
+    ),
+  ]) {
+    if (candidate.id === entity.id) Object.assign(candidate, entity)
+  }
+}
+
+/** 返回落点可呈现的字段实体编码；多对多同时允许关联实体与共享目标，写权限仍分别计算。 */
+export function resolveDesignerTargetEntityCodes(
+  document: DesignerDocument,
+  containerId: string | null,
+): string[] {
+  if (!containerId) return [document.dataSchema.rootEntity.code]
+  const visit = (nodes: DesignerLayoutNode[], codes: string[]): string[] | undefined => {
+    for (const node of nodes) {
+      if (node.nodeType !== 'CONTAINER') continue
+      let next = codes
+      if (SUBTABLE_COMPONENT_TYPES.has(node.componentType)) {
+        const relation = document.dataSchema.relations.find(
+          (item) => item.code === node.configuration.relationCode,
+        )
+        if (!relation) continue
+        next =
+          relation.kind === 'MANY_TO_MANY'
+            ? [relation.childEntity.code, relation.targetEntity.code]
+            : [relation.childEntity.code]
+      }
+      if (node.id === containerId) return next
+      for (const slot of node.slots) {
+        const found = visit(slot.children, next)
+        if (found) return found
+      }
+    }
+    return undefined
+  }
+  return visit(document.uiSchema.root, [document.dataSchema.rootEntity.code]) ?? []
 }

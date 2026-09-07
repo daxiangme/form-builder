@@ -22,8 +22,22 @@ import type {
 /** 为根字段、模块字段或子表行生成互不冲突的反馈键。 */
 export function createDesignerFieldFeedbackKey(
   fieldId: string,
-  context: { viewCode?: string; containerId?: string; rowId?: string } = {},
+  context: {
+    viewCode?: string
+    containerId?: string
+    rowId?: string
+    ancestorRowKeys?: readonly string[]
+  } = {},
 ): string {
+  if (context.ancestorRowKeys) {
+    return JSON.stringify([
+      context.viewCode ?? 'main',
+      context.containerId ?? 'root',
+      context.ancestorRowKeys,
+      context.rowId ?? 'root',
+      fieldId,
+    ])
+  }
   return [
     context.viewCode ?? 'main',
     context.containerId ?? 'root',
@@ -229,11 +243,7 @@ export async function validateDesignerField(
   value: unknown,
   trigger: DesignerValidationRule['trigger'],
   runtime: DesignerExpressionRuntimeContext,
-  options: {
-    state?: DesignerResolvedFieldState
-    remoteAdapter?: DesignerRemoteValidationAdapter
-    collectionRows?: number
-  } = {},
+  options: DesignerFieldValidationOptions = {},
 ): Promise<DesignerValidationResult[]> {
   const state = options.state ?? resolveDesignerFieldState(field, runtime)
   if (!state.visible || state.disabled) return []
@@ -251,6 +261,7 @@ export async function validateDesignerField(
     if (isEmpty(value) && rule.type !== 'SUBTABLE') continue
     if (rule.condition && !evaluateDesignerCondition(rule.condition, runtime)) continue
     const failure = await validateRule(field, rule, value, runtime, options)
+    options.assertActive?.()
     if (failure) {
       results.push({
         fieldId: field.id,
@@ -261,6 +272,24 @@ export async function validateDesignerField(
     }
   }
   return results
+}
+
+/** 单字段验证的范围化运行能力；未提供时保持旧一级表单行为。 */
+export interface DesignerFieldValidationOptions {
+  /** 当前行的最终字段权限与文档状态。 */
+  state?: DesignerResolvedFieldState
+  /** 宿主远程验证端口。 */
+  remoteAdapter?: DesignerRemoteValidationAdapter
+  /** 旧一级表单的集合行数。 */
+  collectionRows?: number
+  /** 按当前父链读取目标集合的完整行数；未知时返回 undefined。 */
+  resolveCollectionRows?: (containerId: string) => number | undefined
+  /** 在当前实体或明确祖先作用域读取比较目标。 */
+  readComparisonField?: (fieldId: string) => unknown
+  /** 防止迟到的异步校验结果写入已切换或删除的行。 */
+  assertActive?: () => void
+  /** 不传播宿主远程验证返回的原始消息。 */
+  redactRemoteMessages?: boolean
 }
 
 /** 校验安全正则文本，拒绝回溯风险结构、反向引用和超长模式。 */
@@ -281,10 +310,7 @@ async function validateRule(
   rule: DesignerValidationRule,
   value: unknown,
   runtime: DesignerExpressionRuntimeContext,
-  options: {
-    remoteAdapter?: DesignerRemoteValidationAdapter
-    collectionRows?: number
-  },
+  options: DesignerFieldValidationOptions,
 ): Promise<string> {
   const configuration = rule.configuration as unknown as Record<string, unknown>
   if (rule.type === 'LENGTH') {
@@ -357,7 +383,13 @@ async function validateRule(
   if (rule.type === 'COMPARE_FIELD') {
     const targetFieldId = String(configuration.fieldId ?? '')
     const operator = String(configuration.operator ?? 'EQ')
-    const target = runtime.fields[targetFieldId]
+    const target = options.readComparisonField
+      ? options.readComparisonField(targetFieldId)
+      : runtime.readField
+        ? runtime.readField(targetFieldId, runtime.currentRow ? 'CURRENT_ROW' : 'ROOT')
+        : runtime.currentRow && targetFieldId in runtime.currentRow
+          ? runtime.currentRow[targetFieldId]
+          : runtime.fields[targetFieldId]
     const valid = compare(value, target, operator)
     if (!valid) return `与${field.label}关联的字段比较未通过`
   }
@@ -375,7 +407,10 @@ async function validateRule(
     }
   }
   if (rule.type === 'SUBTABLE') {
-    const rows = options.collectionRows ?? 0
+    const rows = options.resolveCollectionRows
+      ? options.resolveCollectionRows(String(configuration.containerId ?? ''))
+      : (options.collectionRows ?? 0)
+    if (rows === undefined) return '子表数据尚未完整加载，无法验证行数'
     const minimumRows = finiteNumber(configuration.minimumRows)
     const maximumRows = finiteNumber(configuration.maximumRows)
     if (minimumRows !== undefined && rows < minimumRows) return `子表至少需要 ${minimumRows} 行`
@@ -393,7 +428,8 @@ async function validateRule(
         value,
         fieldId: field.id,
       })
-      if (!result.valid) return result.message || '远程验证未通过'
+      if (!result.valid)
+        return (!options.redactRemoteMessages && result.message) || '远程验证未通过'
     } catch {
       return '远程验证执行失败'
     }

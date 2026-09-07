@@ -54,7 +54,16 @@
         >
           <ElOption label="主表字段" value="ROOT" />
           <ElOption label="当前子表行" value="CURRENT_ROW" />
+          <ElOption label="祖先行" value="ANCESTOR" />
         </ElSelect>
+        <ElInputNumber
+          v-if="expression.scope === 'ANCESTOR'"
+          :model-value="expression.ancestorDepth ?? 1"
+          :min="1"
+          :max="16"
+          aria-label="祖先层数（1 为直接父行）"
+          @update:model-value="updateAncestorDepth"
+        />
         <ElSelect
           :model-value="expression.fieldId"
           filterable
@@ -62,7 +71,7 @@
           @update:model-value="updateFieldId"
         >
           <ElOption
-            v-for="field in fields"
+            v-for="field in availableFields"
             :key="field.id"
             :label="field.label"
             :value="field.id"
@@ -134,6 +143,8 @@
         <DesignerExpressionEditor
           :model-value="argument"
           :fields="fields"
+          :document="document"
+          :current-entity-code="currentEntityCode"
           :variables="variables"
           :mode="argumentMode(expression.function, index)"
           :allow-current-row="allowCurrentRow"
@@ -158,6 +169,7 @@
 import { computed } from 'vue'
 import DxSvgIcon from '../infrastructure/FormIcon.vue'
 import type {
+  DesignerDocument,
   DesignerExpression,
   DesignerExpressionContextKey,
   DesignerExpressionFieldScope,
@@ -172,6 +184,10 @@ const props = withDefaults(
   defineProps<{
     modelValue?: DesignerExpression
     fields: DesignerField[]
+    /** 作用域选择所依据的规范实体和关系目录。 */
+    document?: DesignerDocument
+    /** 当前行的语义实体编码。 */
+    currentEntityCode?: string
     variables: DesignerVariableDefinition[]
     mode: 'condition' | 'value'
     allowCurrentRow?: boolean
@@ -261,10 +277,81 @@ function updateFieldId(value: unknown): void {
 function updateFieldScope(value: unknown): void {
   if (
     expression.value.kind === 'FIELD' &&
-    (value === 'ROOT' || (value === 'CURRENT_ROW' && props.allowCurrentRow))
+    (value === 'ROOT' ||
+      ((value === 'CURRENT_ROW' || value === 'ANCESTOR') && props.allowCurrentRow))
   ) {
-    emit('update:modelValue', { ...expression.value, scope: value as DesignerExpressionFieldScope })
+    const scope = value as DesignerExpressionFieldScope
+    const ancestorDepth = scope === 'ANCESTOR' ? 1 : undefined
+    const candidates = fieldsForScope(scope, ancestorDepth)
+    emit('update:modelValue', {
+      ...expression.value,
+      scope,
+      ancestorDepth,
+      fieldId:
+        candidates.find(
+          (field) => expression.value.kind === 'FIELD' && field.id === expression.value.fieldId,
+        )?.id ??
+        candidates[0]?.id ??
+        '',
+    })
   }
+}
+
+const availableFields = computed(() =>
+  expression.value.kind === 'FIELD'
+    ? fieldsForScope(expression.value.scope, expression.value.ancestorDepth)
+    : props.fields,
+)
+
+/** 只列出根、当前行或指定祖先的合法字段，不允许跨父行选择。 */
+function fieldsForScope(scope: DesignerExpressionFieldScope, ancestorDepth = 1): DesignerField[] {
+  const document = props.document
+  if (!document) return props.fields
+  if (scope === 'ROOT')
+    return props.fields.filter((field) => field.entityCode === document.dataSchema.rootEntity.code)
+  const currentCode = props.currentEntityCode
+  if (!currentCode) return []
+  const currentRelations = document.dataSchema.relations.filter(
+    (relation) =>
+      relation.childEntity.code === currentCode ||
+      (relation.kind === 'MANY_TO_MANY' && relation.targetEntity.code === currentCode),
+  )
+  if (scope === 'CURRENT_ROW') {
+    const codes = new Set([
+      currentCode,
+      ...currentRelations.flatMap((relation) =>
+        relation.kind === 'MANY_TO_MANY'
+          ? [relation.childEntity.code, relation.targetEntity.code]
+          : [relation.childEntity.code],
+      ),
+    ])
+    return props.fields.filter((field) => codes.has(field.entityCode))
+  }
+  let entityIds = new Set(currentRelations.map((relation) => relation.parentEntityId))
+  for (let depth = 1; depth < ancestorDepth; depth += 1)
+    entityIds = new Set(
+      document.dataSchema.relations
+        .filter((relation) => entityIds.has(relation.childEntity.id))
+        .map((relation) => relation.parentEntityId),
+    )
+  const codes = new Set(
+    document.dataSchema.entities
+      .filter((entity) => entityIds.has(entity.id))
+      .map((entity) => entity.code),
+  )
+  return props.fields.filter((field) => codes.has(field.entityCode))
+}
+
+function updateAncestorDepth(value: number | undefined): void {
+  if (expression.value.kind !== 'FIELD' || !value || !Number.isInteger(value)) return
+  const candidates = fieldsForScope('ANCESTOR', value)
+  const fieldId =
+    candidates.find(
+      (field) => expression.value.kind === 'FIELD' && field.id === expression.value.fieldId,
+    )?.id ??
+    candidates[0]?.id ??
+    ''
+  emit('update:modelValue', { ...expression.value, ancestorDepth: value, fieldId })
 }
 
 function updateVariable(value: unknown): void {

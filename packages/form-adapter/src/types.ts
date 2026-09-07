@@ -29,7 +29,7 @@ export interface CreateDxBpmFormAdapterOptions {
   context: FormRuntimeAdapterContext
   navigateResource?: (resourceCode: string, openInNewPage: boolean) => Promise<void>
   confirmOverwrite?: (message: string) => Promise<boolean>
-  /** 由宿主补齐目录、扫码、定位、数据源等包内尚未内置的端口。 */
+  /** 由宿主补齐关系加载、候选选择、保存状态、目录、扫码、定位与数据源等端口；关系 URL 仅由宿主解释。 */
   extras?: FormRuntimeAdapters
 }
 

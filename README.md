@@ -237,11 +237,17 @@ import {
 
 ## 从 @daxiangme/form-vue 迁移
 
-1. 将依赖替换为 `el-form-gen@^0.2.0`。
+1. 将依赖替换为 `el-form-gen@0.3.0`。
 2. 样式改为 `import 'el-form-gen/style.css'`。
 3. 组件与插件改为 `ElFormDesigner`、`ElFormRenderer`、`ElFormGenPlugin`；无前缀别名已删除。
 4. 渲染器 prop `fieldAccess` 改为 `fieldRuntimePolicy`。
 5. 旧访问级别 `REQUIRED` 映射为 `{ accessLevel: 'EDITABLE', required: true }`。
+
+## 0.3 关系运行会话
+
+嵌套关系、多对多选择和共享目标独立授权编辑使用 `createDesignerRuntimeSession` 与 `<ElFormRenderer :session="session" @submission="save" />`。会话统一处理逐行权限、祖先上下文、隔离草稿、显式差量和原子保存回执；旧一级入口继续保留 `modelValue`、`update:modelValue` 和 `submit`。
+
+设计文档升级为 `2.0`，旧文档通过 `migrateDesignerDocument` 保留原 ID 迁移。运行行 ID 不作为数据库身份；关系模式由宿主明确提供身份、版本和授权。完整 API、迁移及保存示例见[关系接入文档](docs/relations.md)，组件与真实 BPM 联调状态见[验收记录](docs/acceptance/issue-1-0.3.0.md)。
 
 ## 后续 DX BPM 接入
 

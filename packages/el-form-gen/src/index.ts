@@ -13,6 +13,7 @@ export {
   createNodeFromComponent,
   decodeDesignerDocument,
   diagnoseDesignerDocument,
+  migrateDesignerDocument,
   designerRadiusEditorOptions,
   designerRadiusValueLabel,
   includeDesignerCurrentOption,
@@ -27,6 +28,7 @@ export type {
   DesignerDiagnostic,
   DesignerDocument,
   DesignerDocumentDecodeResult,
+  DesignerDocumentLimits,
   DesignerField,
   DesignerFieldId,
   DesignerInitialDataModel,
@@ -47,6 +49,76 @@ export type {
 
 /** 主包传递依赖的本地预览与 DX BPM Adapter 工厂。 */
 export { createDxBpmFormAdapter, createLocalPreviewFormAdapter } from '@daxiangme/form-adapter'
+/** 关系表单的内存宿主示例，可用于独立演示保存与冲突处理。 */
+export { createLocalRelationFormAdapter } from '@daxiangme/form-adapter'
+
+/** 关系会话与稳定地址工具；所有运行状态均由 Core 持有。 */
+export {
+  createDesignerRuntimeSession,
+  createDesignerCollectionKey,
+  createDesignerTargetKey,
+  createDesignerRuntimeFeedbackKey,
+} from '@daxiangme/form-core'
+
+/** 关系、权限、命令、提交和回执的完整公开契约。 */
+export type {
+  CreateDesignerRuntimeSessionOptions,
+  DesignerCollectionLoadState,
+  DesignerCollectionScope,
+  DesignerDataEntity,
+  DesignerDataSchema,
+  DesignerExpression,
+  DesignerExpressionFieldScope,
+  DesignerExpressionRuntimeContext,
+  DesignerFormEvent,
+  DesignerEventFlow,
+  DesignerOverlayModule,
+  DesignerResolvedFieldState,
+  DesignerRelation,
+  DesignerManyToManyRelation,
+  DesignerOneToManyRelation,
+  DesignerRelationValueStore,
+  DesignerRuntimeRow,
+  DesignerRuntimeTarget,
+  DesignerRuntimeTargetReference,
+  DesignerRuntimeVersion,
+  DesignerRuntimeCollection,
+  DesignerRuntimeLimits,
+  DesignerRuntimeIssue,
+  DesignerRuntimePolicyContext,
+  DesignerRelationOperation,
+  DesignerRuntimeCommand,
+  DesignerRuntimeCommandResult,
+  DesignerRuntimeSession,
+  DesignerRuntimeSnapshot,
+  DesignerSubmissionOperation,
+  DesignerTargetFieldOrigin,
+  DesignerSubmissionBatch,
+  DesignerOperationReceipt,
+  DesignerSaveReceipt,
+  DesignerRelationCandidate,
+  DesignerRelationRequest,
+  FormRelationRuntimePolicy,
+  FormRelationRuntimePolicyResolver,
+  FormRelationDataAdapter,
+  FormRelationSelectionAdapter,
+  FormSubmissionStatusAdapter,
+} from '@daxiangme/form-core'
+
+/** Renderer 两种互斥入口的公共属性。 */
+export type {
+  ElFormRendererProps,
+  ElFormRendererLegacyProps,
+  ElFormRendererSessionProps,
+} from './rendering/el-form-renderer-props'
+
+/** 内存关系宿主工厂与可选演示场景。 */
+export type {
+  CreateLocalRelationFormAdapterOptions,
+  LocalRelationFormAdapterHandle,
+  LocalRelationSaveScenario,
+  LocalRelationSelectionScenario,
+} from '@daxiangme/form-adapter'
 
 /** 主包传递依赖的 Adapter 与传输端口类型。 */
 export type {

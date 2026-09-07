@@ -97,12 +97,20 @@ export function mutateDesignerView(
   const module = document.uiSchema.overlays.find((item) => item.code === viewCode)
   if (!module) return
   const mainRoot = document.uiSchema.root
+  const mainEntity = document.dataSchema.rootEntity
+  const contextEntity =
+    module.dataContext === 'SUBTABLE_ROW_DRAFT'
+      ? document.dataSchema.entities.find((entity) => entity.id === module.contextEntityId)
+      : mainEntity
+  if (!contextEntity) return
+  document.dataSchema.rootEntity = contextEntity
   document.uiSchema.root = module.root
   try {
     mutation(document)
     module.root = document.uiSchema.root
   } finally {
     document.uiSchema.root = mainRoot
+    document.dataSchema.rootEntity = mainEntity
   }
 }
 

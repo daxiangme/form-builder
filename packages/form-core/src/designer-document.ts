@@ -7,6 +7,7 @@ import {
   normalizeDesignerDataModel,
   placeDesignerDataField,
   resolveDesignerTargetEntityCode,
+  resolveDesignerTargetEntityCodes,
 } from './data-model'
 import {
   createDefaultDesignerFieldBehavior,
@@ -24,6 +25,7 @@ import {
   type DesignerDeviceGrid,
   type DesignerDocument,
   type DesignerDocumentDecodeResult,
+  type DesignerDocumentLimits,
   type DesignerDropTarget,
   type DesignerField,
   type DesignerFieldNode,
@@ -111,7 +113,7 @@ export function createNodeFromComponent(
   if (!registration || registration.availability === 'UNAVAILABLE') return undefined
   if (registration.nodeKind === 'CONTAINER') {
     const node = createContainerNode(registration, overrides.configuration)
-    ensureDesignerSubtableRelation(document, node)
+    ensureDesignerSubtableRelation(document, node, overrides.entityCode)
     return node
   }
   const field = createDesignerField(document, registration, overrides)
@@ -226,6 +228,8 @@ export function designerNodeDropRejection(
     const registration = findDesignerComponent(sourceNode.componentType)
     if (!registration || registration.nodeKind !== 'CONTAINER') return '拖动布局组件未注册'
     if (registration.availability === 'UNAVAILABLE') return registration.unavailableReason
+    const scopeRejection = nodeScopeDropRejection(document, sourceNode, target.containerId)
+    if (scopeRejection) return scopeRejection
     return targetContainerDropRejection(
       document,
       target.containerId,
@@ -265,30 +269,61 @@ export function removeDesignerNode(
 export function restoreDesignerFieldNode(
   document: DesignerDocument,
   fieldId: string,
+  relationCode?: string,
 ): DesignerFieldNode | undefined {
-  return placeDesignerDataField(document, fieldId)
+  return placeDesignerDataField(document, fieldId, relationCode)
 }
 
-/** 为尚未放置的一级关系创建行子表或块子表容器。 */
+/** 为尚未放置的关系创建行子表或块子表容器；嵌套关系会先补齐唯一父容器。 */
 export function createDesignerRelationContainer(
   document: DesignerDocument,
   relationCode: string,
   componentType: 'row-subtable' | 'block-subtable',
 ): DesignerContainerNode | undefined {
+  return createRelationLayout(document, relationCode, componentType, new Set())
+}
+
+/** 按父实体递归建立缺少的布局上下文；歧义父关系需要用户先手动放置。 */
+function createRelationLayout(
+  document: DesignerDocument,
+  relationCode: string,
+  componentType: 'row-subtable' | 'block-subtable',
+  visiting: Set<string>,
+): DesignerContainerNode | undefined {
   const relation = document.dataSchema.relations.find((item) => item.code === relationCode)
-  if (!relation) return undefined
-  const alreadyPlaced = findRelationContainer(document.uiSchema.root, relationCode)
-  if (alreadyPlaced) return alreadyPlaced
+  if (!relation || visiting.has(relationCode) || visiting.size >= 16) return undefined
+  const existing = findRelationContainer(document.uiSchema.root, relationCode)
+  if (existing) return existing
+  visiting.add(relationCode)
+  let collection = document.uiSchema.root
+  if (relation.parentEntityId !== document.dataSchema.rootEntity.id) {
+    const parents = document.dataSchema.relations.filter(
+      (item) => item.childEntity.id === relation.parentEntityId,
+    )
+    const placed = parents.flatMap((parent) => {
+      const node = findRelationContainer(document.uiSchema.root, parent.code)
+      return node ? [node] : []
+    })
+    const parent =
+      placed.length === 1
+        ? placed[0]
+        : parents.length === 1
+          ? createRelationLayout(document, parents[0]!.code, 'block-subtable', visiting)
+          : undefined
+    const slot = parent?.slots.find((item) => item.slotCode === 'content')
+    if (!slot) return undefined
+    collection = slot.children
+  }
   const node = createNodeFromComponent(document, componentType, {
     configuration: { relationCode, title: relation.childEntity.name },
   })
   if (node?.nodeType !== 'CONTAINER') return undefined
-  document.uiSchema.root.push(node)
+  collection.push(node)
   return node
 }
 
 /**
- * 将字段页选择的主实体字段和一级子关系作为一个布局事务写入文档。
+ * 将字段页选择的字段和关系作为一个布局事务写入文档，嵌套关系按父实体补齐容器。
  *
  * 已放置字段和关系会被跳过；主键、系统字段不会被自动生成成普通可写控件。
  */
@@ -307,7 +342,20 @@ export function generateDesignerDataModelLayout(
     )
     if (node && !alreadyPlaced) createdNodeIds.push(node.id)
   }
-  for (const fieldId of request.fieldIds) {
+  const explicitFields = new Set(
+    request.fieldPlacements?.map((placement) => placement.fieldId) ?? [],
+  )
+  for (const placement of request.fieldPlacements ?? []) {
+    const field = document.dataSchema.fields.find((item) => item.id === placement.fieldId)
+    if (!field || field.primaryKey || field.systemField) {
+      skippedFieldIds.push(placement.fieldId)
+      continue
+    }
+    const node = placeDesignerDataField(document, placement.fieldId, placement.relationCode)
+    if (node) createdNodeIds.push(node.id)
+    else skippedFieldIds.push(placement.fieldId)
+  }
+  for (const fieldId of request.fieldIds.filter((id) => !explicitFields.has(id))) {
     const field = document.dataSchema.fields.find((item) => item.id === fieldId)
     if (!field || field.primaryKey || field.systemField) {
       skippedFieldIds.push(fieldId)
@@ -336,7 +384,12 @@ export function duplicateDesignerNode(
 ): DesignerLayoutNode | undefined {
   const located = locateNode(document.uiSchema.root, nodeId)
   if (!located) return undefined
-  const copy = cloneNodeWithFields(document, located.node)
+  const fieldCopies = new Map<string, string>()
+  const copy = cloneNodeWithFields(document, located.node, fieldCopies)
+  for (const copiedId of fieldCopies.values()) {
+    const field = document.dataSchema.fields.find((item) => item.id === copiedId)
+    if (field) remapCopiedFieldReferences(field.behavior, fieldCopies)
+  }
   located.collection.splice(located.index + 1, 0, copy)
   return copy
 }
@@ -398,13 +451,16 @@ export function synchronizeContainerSlots(node: DesignerContainerNode): void {
 }
 
 /** 对未知输入进行解码和完整结构诊断。 */
-export function decodeDesignerDocument(source: unknown): DesignerDocumentDecodeResult {
+export function decodeDesignerDocument(
+  source: unknown,
+  limits: DesignerDocumentLimits = {},
+): DesignerDocumentDecodeResult {
   if (!isRecord(source)) {
     return { diagnostics: [diagnostic('ERROR', 'DOCUMENT_TYPE', '导入内容必须是 JSON 对象', '$')] }
   }
   try {
     const normalized = normalizeDesignerDocument(source)
-    const diagnostics = diagnoseDesignerDocumentInternal(normalized)
+    const diagnostics = diagnoseDesignerDocumentInternal(normalized, limits)
     if (diagnostics.some((item) => item.severity === 'ERROR')) return { diagnostics }
     return { document: normalized, diagnostics }
   } catch {
@@ -417,22 +473,47 @@ export function decodeDesignerDocument(source: unknown): DesignerDocumentDecodeR
 }
 
 /**
+ * 将 1.0 文档无损迁移为 2.0 并执行完整诊断；当前版本也可调用，未知版本明确拒绝。
+ *
+ * 不修改输入，不重建既有文档、实体、关系、节点或字段身份；结果必须确认无错误后使用。
+ */
+export function migrateDesignerDocument(
+  source: unknown,
+  limits: DesignerDocumentLimits = {},
+): DesignerDocumentDecodeResult {
+  return decodeDesignerDocument(source, limits)
+}
+
+/**
  * 校验未知文档输入的版本、字段、组件、布局、typed slots 和引用完整性。
  *
  * 该入口承担导入边界，任何非法结构都必须返回诊断而不能把类型异常抛给工作台。
  */
-export function diagnoseDesignerDocument(source: unknown): DesignerDiagnostic[] {
+export function diagnoseDesignerDocument(
+  source: unknown,
+  limits: DesignerDocumentLimits = {},
+): DesignerDiagnostic[] {
   try {
     return diagnoseDesignerDocumentInternal(
       isRecord(source) ? normalizeDesignerDocument(source) : source,
+      limits,
     )
   } catch {
     return [diagnostic('ERROR', 'DOCUMENT_DIAGNOSTIC', '导入内容结构异常，无法完成安全诊断', '$')]
   }
 }
 
-function diagnoseDesignerDocumentInternal(source: unknown): DesignerDiagnostic[] {
+function diagnoseDesignerDocumentInternal(
+  source: unknown,
+  limits: DesignerDocumentLimits,
+): DesignerDiagnostic[] {
   const result: DesignerDiagnostic[] = []
+  if (
+    Object.values(limits).some(
+      (limit) => limit !== undefined && (!Number.isInteger(limit) || limit < 1),
+    )
+  )
+    return [diagnostic('ERROR', 'DOCUMENT_LIMITS', '文档资源限制必须为正整数', '$')]
   if (!isRecord(source)) {
     result.push(diagnostic('ERROR', 'DOCUMENT_TYPE', '设计文档必须是对象', '$'))
     return result
@@ -481,7 +562,7 @@ function diagnoseDesignerDocumentInternal(source: unknown): DesignerDiagnostic[]
   if (dataSchema) {
     diagnoseUnknownProperties(
       dataSchema,
-      ['source', 'rootEntity', 'relations', 'fields'],
+      ['source', 'rootEntity', 'entities', 'relations', 'fields'],
       '$.dataSchema',
       'DATA_SCHEMA_UNKNOWN_PROPERTY',
       result,
@@ -493,12 +574,7 @@ function diagnoseDesignerDocumentInternal(source: unknown): DesignerDiagnostic[]
     }
     if (!Array.isArray(dataSchema.relations)) {
       result.push(
-        diagnostic(
-          'ERROR',
-          'RELATION_CATALOG',
-          '一级子表关系目录必须是数组',
-          '$.dataSchema.relations',
-        ),
+        diagnostic('ERROR', 'RELATION_CATALOG', '关系目录必须是数组', '$.dataSchema.relations'),
       )
     }
   }
@@ -673,7 +749,17 @@ function diagnoseDesignerDocumentInternal(source: unknown): DesignerDiagnostic[]
   }
   const nodeIds = new Set<string>()
   if (root)
-    diagnoseNodes(root, '$.uiSchema.root', fieldIds, fieldMap, nodeIds, result, 0, new WeakSet())
+    diagnoseNodes(
+      root,
+      '$.uiSchema.root',
+      fieldIds,
+      fieldMap,
+      nodeIds,
+      result,
+      0,
+      new WeakSet(),
+      limits.maxLayoutDepth ?? 32,
+    )
   if (uiSchema && Array.isArray(uiSchema.overlays)) {
     for (const [index, overlay] of uiSchema.overlays.entries()) {
       if (!isRecord(overlay) || !Array.isArray(overlay.root)) continue
@@ -686,6 +772,7 @@ function diagnoseDesignerDocumentInternal(source: unknown): DesignerDiagnostic[]
         result,
         0,
         new WeakSet(),
+        limits.maxLayoutDepth ?? 32,
       )
     }
   }
@@ -696,7 +783,7 @@ function diagnoseDesignerDocumentInternal(source: unknown): DesignerDiagnostic[]
     isRecord(dataSchema.rootEntity) &&
     Array.isArray(dataSchema.relations)
   ) {
-    result.push(...diagnoseDesignerDataModel(source as unknown as DesignerDocument))
+    result.push(...diagnoseDesignerDataModel(source as unknown as DesignerDocument, limits))
   }
   result.push(...diagnoseDesignerAdvancedDocument(source as unknown as DesignerDocument))
   return result
@@ -910,23 +997,34 @@ function removeNodeFromCollection(
 function cloneNodeWithFields(
   document: DesignerDocument,
   node: DesignerLayoutNode,
+  fieldCopies: Map<string, string>,
+  sharedTargetEntityCode?: string,
 ): DesignerLayoutNode {
   if (node.nodeType === 'FIELD') {
     const source = document.dataSchema.fields.find((field) => field.id === node.fieldId)
-    if (!source) return { ...deepClone(node), id: createDesignerId('node') }
+    if (!source || source.entityCode === sharedTargetEntityCode)
+      return { ...deepClone(node), id: createDesignerId('node') }
     const copy = deepClone(source)
     copy.id = createDesignerId('field')
     copy.key = uniqueFieldKey(document, source.entityCode, `${source.key}_copy`)
     copy.label = `${source.label}副本`
+    fieldCopies.set(source.id, copy.id)
     document.dataSchema.fields.push(copy)
     return { ...deepClone(node), id: createDesignerId('node'), fieldId: copy.id }
   }
   const copy = deepClone(node)
+  const relation = document.dataSchema.relations.find(
+    (item) => item.code === node.configuration.relationCode,
+  )
+  const targetCode =
+    relation?.kind === 'MANY_TO_MANY' ? relation.targetEntity.code : sharedTargetEntityCode
   copy.id = createDesignerId('node')
   copy.slots = copy.slots.map((slot) => ({
     ...slot,
     id: createDesignerId('slot'),
-    children: slot.children.map((child) => cloneNodeWithFields(document, child)),
+    children: slot.children.map((child) =>
+      cloneNodeWithFields(document, child, fieldCopies, targetCode),
+    ),
   }))
   if (typeof copy.configuration.title === 'string')
     copy.configuration.title = `${copy.configuration.title}副本`
@@ -995,12 +1093,16 @@ function diagnoseNodes(
   result: DesignerDiagnostic[],
   depth: number,
   seenNodes: WeakSet<object>,
+  maxDepth: number,
 ): void {
   if (!Array.isArray(nodes)) {
     result.push(diagnostic('ERROR', 'LAYOUT_COLLECTION', '布局 children 必须是数组', path))
     return
   }
-  if (depth > 6) result.push(diagnostic('ERROR', 'LAYOUT_DEPTH', '布局嵌套不能超过 6 层', path))
+  if (depth > maxDepth) {
+    result.push(diagnostic('ERROR', 'LAYOUT_DEPTH', `布局嵌套不能超过 ${maxDepth} 层`, path))
+    return
+  }
   for (const [index, rawNode] of nodes.entries()) {
     const nodePath = `${path}[${index}]`
     if (!isRecord(rawNode)) {
@@ -1201,10 +1303,7 @@ function diagnoseNodes(
             continue
           }
           const child = rawChild as unknown as DesignerLayoutNode
-          if (child.nodeType !== 'FIELD') {
-            result.push(diagnostic('ERROR', 'SUBTABLE_CHILD', '子表只能包含字段节点', childPath))
-            continue
-          }
+          if (child.nodeType !== 'FIELD') continue
           if (columnFieldIds.has(child.fieldId)) {
             result.push(
               diagnostic(
@@ -1240,6 +1339,7 @@ function diagnoseNodes(
         result,
         depth + 1,
         seenNodes,
+        maxDepth,
       )
     }
   }
@@ -1257,6 +1357,8 @@ function detachedDesignerNodeDropRejection(
     const registration = findDesignerComponent(node.componentType)
     if (!registration || registration.nodeKind !== 'CONTAINER') return '待插入布局组件未注册'
     if (registration.availability === 'UNAVAILABLE') return registration.unavailableReason
+    const scopeRejection = nodeScopeDropRejection(document, node, target.containerId)
+    if (scopeRejection) return scopeRejection
     return targetContainerDropRejection(
       document,
       target.containerId,
@@ -1321,11 +1423,16 @@ function targetContainerDropRejection(
     ? findNodeDepth(document.uiSchema.root, targetContainerId)
     : -1
   if (targetContainerId && targetDepth === undefined) return '目标容器不存在'
-  if ((targetDepth ?? -1) + 1 + sourceSubtreeDepth > 6) return '布局嵌套不能超过 6 层'
+  if ((targetDepth ?? -1) + 1 + sourceSubtreeDepth > 32) return '布局嵌套不能超过 32 层'
+  if (
+    ['row-subtable', 'block-subtable'].includes(sourceComponentType) &&
+    relationDepthAtTarget(document.uiSchema.root, targetContainerId) >= 16
+  )
+    return '关系嵌套不能超过 16 层'
   if (sourceKind === 'FIELD' && sourceEntityCode) {
     const targetEntityCode = resolveDesignerTargetEntityCode(document, targetContainerId)
     if (!targetEntityCode) return '目标子表尚未绑定有效关系'
-    if (sourceEntityCode !== targetEntityCode) {
+    if (!resolveDesignerTargetEntityCodes(document, targetContainerId).includes(sourceEntityCode)) {
       return `字段属于实体 ${sourceEntityCode}，不能放入实体 ${targetEntityCode} 的布局`
     }
   }
@@ -1336,7 +1443,7 @@ function targetContainerDropRejection(
   if (!targetRegistration?.acceptsChildren)
     return `${targetRegistration?.name ?? '目标组件'}不接受子节点`
   if (!['row-subtable', 'block-subtable'].includes(target.componentType)) return ''
-  if (sourceKind !== 'FIELD') return '子表只能接收字段，不能嵌套布局组件'
+  if (sourceKind !== 'FIELD') return ''
   if (sourceHidden || sourceComponentType === 'hidden') return '隐藏字段不能作为子表可见列'
   return ''
 }
@@ -2044,6 +2151,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function normalizeDesignerDocument(source: unknown): DesignerDocument {
   const normalized = deepClone(source) as unknown
   if (!isRecord(normalized)) return normalized as DesignerDocument
+  const legacy = normalized.documentVersion === '1.0'
   normalizeDesignerAdvancedDocument(normalized)
   normalizeDesignerAppearance(normalized.appearance)
   if (isRecord(normalized.uiSchema) && Array.isArray(normalized.uiSchema.root)) {
@@ -2056,6 +2164,7 @@ function normalizeDesignerDocument(source: unknown): DesignerDocument {
     }
     if (isRecord(normalized.dataSchema) && Array.isArray(normalized.dataSchema.fields)) {
       normalizeDesignerDataModel(normalized as unknown as DesignerDocument)
+      if (legacy) normalized.documentVersion = DESIGNER_DOCUMENT_VERSION
     }
   }
   return normalized as unknown as DesignerDocument
@@ -2107,4 +2216,88 @@ function normalizeSurfaceContainerConfigurations(nodes: unknown[]): void {
 
 function deepClone<T>(source: T): T {
   return JSON.parse(JSON.stringify(source)) as T
+}
+
+/** 验证整个移动子树的父实体及字段所属作用域，普通分组不能绕过关系约束。 */
+function nodeScopeDropRejection(
+  document: DesignerDocument,
+  source: DesignerLayoutNode,
+  targetContainerId: string | null,
+): string {
+  const nestedRelations = (node: DesignerLayoutNode): number =>
+    node.nodeType === 'FIELD'
+      ? 0
+      : (['row-subtable', 'block-subtable'].includes(node.componentType) ? 1 : 0) +
+        Math.max(0, ...node.slots.flatMap((slot) => slot.children.map(nestedRelations)))
+  if (
+    relationDepthAtTarget(document.uiSchema.root, targetContainerId) + nestedRelations(source) >
+    16
+  )
+    return '关系嵌套不能超过 16 层'
+  const entityCode = resolveDesignerTargetEntityCode(document, targetContainerId)
+  const entity = document.dataSchema.entities.find((item) => item.code === entityCode)
+  if (!entity) return '目标布局缺少有效实体上下文'
+  const visit = (node: DesignerLayoutNode, currentId: string, targetCode?: string): string => {
+    if (node.nodeType === 'FIELD') {
+      const field = document.dataSchema.fields.find((item) => item.id === node.fieldId)
+      return field &&
+        document.dataSchema.entities.find((item) => item.id === currentId)?.code !==
+          field.entityCode &&
+        field.entityCode !== targetCode
+        ? '移动后字段所属实体与布局作用域不一致'
+        : ''
+    }
+    let childId = currentId
+    let childTarget = targetCode
+    if (['row-subtable', 'block-subtable'].includes(node.componentType)) {
+      const relation = document.dataSchema.relations.find(
+        (item) => item.code === node.configuration.relationCode,
+      )
+      if (!relation || relation.parentEntityId !== currentId)
+        return '关系父实体与目标布局作用域不一致'
+      childId = relation.childEntity.id
+      childTarget = relation.kind === 'MANY_TO_MANY' ? relation.targetEntity.code : undefined
+    }
+    for (const slot of node.slots)
+      for (const child of slot.children) {
+        const reason = visit(child, childId, childTarget)
+        if (reason) return reason
+      }
+    return ''
+  }
+  return visit(source, entity.id, resolveDesignerTargetEntityCodes(document, targetContainerId)[1])
+}
+
+/** 重写复制子树内的字段引用；子树外的主表或祖先引用继续指向原字段。 */
+function remapCopiedFieldReferences(
+  value: unknown,
+  fieldCopies: ReadonlyMap<string, string>,
+): void {
+  if (Array.isArray(value)) {
+    value.forEach((item) => remapCopiedFieldReferences(item, fieldCopies))
+    return
+  }
+  if (!isRecord(value)) return
+  if (typeof value.fieldId === 'string' && fieldCopies.has(value.fieldId))
+    value.fieldId = fieldCopies.get(value.fieldId)!
+  Object.values(value).forEach((item) => remapCopiedFieldReferences(item, fieldCopies))
+}
+
+/** 计算落点包含自身在内的关系层数，普通布局容器不占用关系深度。 */
+function relationDepthAtTarget(
+  nodes: DesignerLayoutNode[],
+  targetId: string | null,
+  depth = 0,
+): number {
+  if (!targetId) return 0
+  for (const node of nodes) {
+    if (node.nodeType !== 'CONTAINER') continue
+    const next = depth + (['row-subtable', 'block-subtable'].includes(node.componentType) ? 1 : 0)
+    if (node.id === targetId) return next
+    for (const slot of node.slots) {
+      const found = relationDepthAtTarget(slot.children, targetId, next)
+      if (found >= 0) return found
+    }
+  }
+  return -1
 }
