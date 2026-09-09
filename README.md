@@ -9,8 +9,8 @@
 ## 功能一览
 
 - 可嵌入的拖拽式表单设计器 `ElFormDesigner` 和运行渲染器 `ElFormRenderer`。
-- 统一的 `DesignerDocument 1.0` 文档、严格编解码与诊断。
-- 主表单、弹窗、抽屉、响应式栅格、行子表和块子表。
+- 统一的 `DesignerDocument 2.0` 文档、严格编解码与诊断。
+- 主表单、弹窗、抽屉、响应式栅格、行子表、块子表，以及嵌套关系与多对多。
 - 状态条件、公式计算、字段联动、验证规则与声明式事件流。
 - Element Plus 控件、浅色/深色主题和受控圆角样式。新建文档默认顶部左对齐；`THEME` 跟随宿主 `--el-border-radius-base`，自定义圆角为 0～32 的 4 的倍数 px，旧档位 `NONE` / `SMALL` / `BASE` / `LARGE` 解码为 0 / 4 / 8 / 12。
 - 文件、数据源、远程验证、OCR、扫码、定位、导航、动态选项、日期范围、验证码、个人签名、地区级联与宿主动作 Adapter 端口。
@@ -71,7 +71,7 @@ import App from './App.vue'
 createApp(App).use(ElementPlus).use(ElFormGenPlugin).mount('#app')
 ```
 
-全局注册名是 `ElFormDesigner` 与 `ElFormRenderer`。新包不再导出无前缀兼容别名。
+全局注册名是 `ElFormDesigner` 与 `ElFormRenderer`。
 
 ## 设计表单
 
@@ -105,49 +105,60 @@ function handleSave(nextDocument: DesignerDocument) {
 
 ## 渲染表单
 
-`ElFormRenderer` 使用同一份文档渲染新增、编辑、只读和详情状态，并输出稳定的提交投影。
+推荐用 `createDesignerRuntimeSession` 创建运行会话，再交给 `ElFormRenderer`。会话持有文档、值、模式和权限；保存走 `@submission` 回执，`@submit` 只表示前端投影，不代表持久化成功。
 
 ```vue
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onBeforeUnmount } from 'vue'
 import {
   ElFormRenderer,
   createDemoDesignerDocument,
-  type DesignerRuntimeValueStore,
-  type DesignerSubmissionProjection,
-  type FormFieldRuntimePolicyMap,
+  createDesignerRuntimeSession,
+  type DesignerSaveReceipt,
+  type DesignerSubmissionBatch,
 } from 'el-form-gen'
 
 const document = createDemoDesignerDocument('purchase-application')
-const value = ref<DesignerRuntimeValueStore>({ fields: {}, collections: {} })
-const fieldRuntimePolicy: FormFieldRuntimePolicyMap | undefined = undefined
+const session = createDesignerRuntimeSession({
+  document,
+  mode: 'CREATE',
+})
 
-function handleSubmit(projection: DesignerSubmissionProjection) {
-  console.info(projection)
+async function save(batch: DesignerSubmissionBatch): Promise<void> {
+  const receipt: DesignerSaveReceipt = await saveAtomicBatch(batch)
+  session.applyReceipt(receipt)
 }
+
+onBeforeUnmount(() => {
+  session.dispose()
+})
 </script>
 
 <template>
-  <ElFormRenderer
-    v-model="value"
-    :document="document"
-    mode="CREATE"
-    :field-runtime-policy="fieldRuntimePolicy"
-    @submit="handleSubmit"
-  />
+  <ElFormRenderer :session="session" show-toolbar @submission="save" />
 </template>
 ```
 
+`saveAtomicBatch` 是宿主自己的保存逻辑，不是组件库导出函数。没有初始值的 `CREATE` 会创建新根行；`EDIT` / `READ_ONLY` / `DETAIL` 需要宿主提供初始身份和版本。卸载 Renderer 不会销毁会话，宿主不再使用时再调用 `session.dispose()`。
+
+没有嵌套关系、多对多或共享目标时，仍可用 `document` + `v-model` 渲染独立表单：
+
+```vue
+<ElFormRenderer v-model="value" :document="document" mode="CREATE" @submit="handleSubmit" />
+```
+
+嵌套关系、多对多选择和共享目标必须走会话入口。会话统一处理逐行权限、祖先上下文、隔离草稿、显式差量和原子保存回执。完整 API 与保存示例见[关系接入文档](docs/relations.md)。
+
 ## 三态字段权限
 
-运行策略以字段 **ID** 为键，而不是 `fieldPath` 或字段编码。设计文档不保存权限；设计器与运行渲染器分离，流程节点把三态访问级别作为第二份输入传给运行组件。
+运行策略以字段 **ID** 为键。设计文档不保存权限；设计器与运行渲染器分离，宿主把三态访问级别作为第二份输入传给运行组件。
 
 未传 `fieldRuntimePolicy` 时，渲染器按独立表单 Schema 工作：文档必填、条件规则、公式只读和运行模式继续生效，字段默认可编辑。
 
 一旦传入策略对象（包括 `{}`）：
 
-- 键缺失走 `fieldRuntimePolicyFallback`，默认 `HIDDEN`（不渲染、不校验、不提交）。DX BPM 固定该值。仅非 BPM 宿主只传关心的字段时才显式设为 `EDITABLE`，此时未列出字段按文档可编辑并继承 `required`。
-- 非法 `accessLevel`（含历史 `REQUIRED`）仍按 `HIDDEN` 失败关闭，不会被 fallback 放宽。
+- 键缺失走 `fieldRuntimePolicyFallback`，默认 `HIDDEN`（不渲染、不校验、不提交）。只传关心的字段时须显式设为 `EDITABLE`，此时未列出字段按文档可编辑并继承 `required`。
+- 非法 `accessLevel` 仍按 `HIDDEN` 失败关闭，不会被 fallback 放宽。
 - 权限只能收紧：设计时隐藏或只读的字段，运行时传入 `EDITABLE` 无效。
 
 | 访问级别    | 渲染   | 校验               | 用户提交   | 输入 / 附件 / 子表 / 事件写入 |
@@ -156,7 +167,7 @@ function handleSubmit(projection: DesignerSubmissionProjection) {
 | `READ_ONLY` | 只展示 | 不校验             | 不提交     | 拒绝                          |
 | `EDITABLE`  | 正常   | 设计文档必填与规则 | 按提交策略 | 允许                          |
 
-必填只来自表单设计。隐藏或只读字段自动不必填。文档里的条件规则 `target: 'REQUIRED'` 仍然属于 Schema，不是宿主权限。旧 BPM 节点权限 `REQUIRED` 映射为 `EDITABLE`，若旧流程靠节点级必填实现「仅该节点必填」，迁移后这个差异会丢失。同一字段在填写 / 只读 / 隐藏节点下的红星、校验、提交以及 `session.updateRuntimePolicy` 示例见[关系接入文档的权限投影](docs/relations.md#权限投影)。
+必填只来自表单设计。隐藏或只读字段自动不必填。文档里的条件规则 `target: 'REQUIRED'` 仍然属于 Schema，不是宿主权限。同一字段在可编辑 / 只读 / 隐藏下的红星、校验、提交以及 `session.updateRuntimePolicy` 示例见[关系接入文档的权限投影](docs/relations.md#权限投影)。
 
 公式（`FORMULA`）可以刷新只读字段的展示值，但不能放宽宿主权限。联动（`LINKAGE`）和事件流写入必须遵守 `HIDDEN` / `READ_ONLY`。文档 `display.readonly` 仍可进入提交；宿主 `READ_ONLY` 不会进入用户提交。
 
@@ -166,9 +177,11 @@ const fieldRuntimePolicy: FormFieldRuntimePolicyMap = {
   [amountFieldId]: { accessLevel: 'READ_ONLY' },
   [secretFieldId]: { accessLevel: 'HIDDEN' },
 }
+
+session.updateRuntimePolicy({ fieldRuntimePolicy })
 ```
 
-切换审批节点时调用 `session.updateRuntimePolicy({ fieldRuntimePolicy })`，不要重建会话。
+切换权限时调用 `session.updateRuntimePolicy`，不要重建会话。
 
 ## 模块化表单
 
@@ -202,26 +215,15 @@ const fieldRuntimePolicy: FormFieldRuntimePolicyMap = {
 
 上传字段的 Schema 只保存数量、大小、类型、显示方式和可选策略引用。文件值只持久化稳定 `assetId`，不会把 URL、Method、Token 或回调写入表单文档。
 
-本地预览和 DX BPM 工厂都从主包导入：
+本地预览工厂从主包导入：
 
 ```ts
-import {
-  createLocalPreviewFormAdapter,
-  createDxBpmFormAdapter,
-  type FormRuntimeAdapters,
-} from 'el-form-gen'
+import { createLocalPreviewFormAdapter, type FormRuntimeAdapters } from 'el-form-gen'
 
 const { adapters, dispose } = createLocalPreviewFormAdapter()
-
-const bpmAdapters: FormRuntimeAdapters = createDxBpmFormAdapter({
-  transport: {
-    request: ({ method, path, query, body }) =>
-      dxHttp.request({ method, url: path, params: query, data: body }),
-    download: ({ path, query }) => dxHttp.download(path, { params: query }),
-  },
-  context: { applicationCode: 'expense', resourceCode: 'expense-form', recordToken },
-})
 ```
+
+生产环境由宿主实现 `FormRuntimeAdapters` 的相应端口，并在创建会话时注入。传输生命周期由宿主负责，不要把 Token、URL 或回调写入表单文档。
 
 ## 文档工具
 
@@ -238,35 +240,12 @@ import {
 } from 'el-form-gen'
 ```
 
-## 从 @daxiangme/form-vue 迁移
-
-1. 将依赖替换为 `el-form-gen@0.4.0`。
-2. 样式改为 `import 'el-form-gen/style.css'`。
-3. 组件与插件改为 `ElFormDesigner`、`ElFormRenderer`、`ElFormGenPlugin`；无前缀别名已删除。
-4. 渲染器 prop `fieldAccess` 改为 `fieldRuntimePolicy`。
-5. 旧访问级别 `REQUIRED` 映射为 `{ accessLevel: 'EDITABLE' }`，必填在表单设计里配置。传入 `fieldRuntimePolicy` 时默认 `HIDDEN` fallback；BPM 固定该值。
-
-## 0.3 关系运行会话
-
-嵌套关系、多对多选择和共享目标独立授权编辑使用 `createDesignerRuntimeSession` 与 `<ElFormRenderer :session="session" @submission="save" />`。会话统一处理逐行权限、祖先上下文、隔离草稿、显式差量和原子保存回执；旧一级入口继续保留 `modelValue`、`update:modelValue` 和 `submit`。
-
-设计文档升级为 `2.0`，旧文档通过 `migrateDesignerDocument` 保留原 ID 迁移。运行行 ID 不作为数据库身份；关系模式由宿主明确提供身份、版本和授权。完整 API、迁移及保存示例见[关系接入文档](docs/relations.md)，组件与真实 BPM 联调状态见[验收记录](docs/acceptance/issue-1-0.3.0.md)。
-
-## 后续 DX BPM 接入
-
-本仓库本轮不修改 DX BPM。后续接入请严格按下列方式替换：
-
-1. 宿主依赖改为 `el-form-gen`，不再安装 `@daxiangme/form-vue`。
-2. 运行策略的键必须是表单字段 **ID**，不要用数据模型 `fieldPath`。需要先把 BPM 字段路径解析到 `DesignerField.id`。
-3. 历史节点权限 `REQUIRED` 转换为 `{ accessLevel: 'EDITABLE' }`，必填在表单设计里配置。`HIDDEN` 与 `READ_ONLY` 保持原语义。传入 `fieldRuntimePolicy` 时固定 `fieldRuntimePolicyFallback: 'HIDDEN'`。节点之间的必填差异换该节点自己的设计文档。若旧流程靠节点级 `REQUIRED` 实现「仅该节点必填」，迁移后这个差异会丢失。
-4. 通过 `createDxBpmFormAdapter` 注入传输端口；Token、租户和 Axios 生命周期仍由宿主负责。
-
 ## 高级扩展与内部架构
 
 内部依赖固定为 `el-form-gen -> form-core` 且 `el-form-gen -> form-adapter -> form-core`：
 
 - `@daxiangme/form-core` 是纯 TypeScript 文档、规则、诊断和运行端口深模块。
-- `@daxiangme/form-adapter` 提供本地预览与 DX BPM 宿主适配工厂。
+- `@daxiangme/form-adapter` 提供本地预览与宿主适配工厂。
 
 普通 Vue 应用始终从 `el-form-gen` 开始。当前版本支持 Vue 3、Element Plus 与现代 ESM 浏览器工程，不承诺 CommonJS、SSR 或其他 UI 框架。
 

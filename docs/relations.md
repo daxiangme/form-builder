@@ -123,22 +123,22 @@ async function save(batch: DesignerSubmissionBatch): Promise<void> {
 
 ## 权限投影
 
-继续使用以字段 ID 为键的 `fieldRuntimePolicy`，每项只有 `accessLevel: 'EDITABLE' | 'READ_ONLY' | 'HIDDEN'`。设计文档不保存权限；必填由设计配置决定，节点权限不能临时把字段变成必填。只读和隐藏始终取消必填：不显示红星、不跑必填校验、不进入用户提交。
+继续使用以字段 ID 为键的 `fieldRuntimePolicy`，每项只有 `accessLevel: 'EDITABLE' | 'READ_ONLY' | 'HIDDEN'`。设计文档不保存权限；必填由设计配置决定，运行策略不能临时把字段变成必填。只读和隐藏始终取消必填：不显示红星、不跑必填校验、不进入用户提交。
 
-未传映射时字段默认可编辑，文档 `required` 按 Schema 生效。传入映射后（包括 `{}`）键缺失走 `fieldRuntimePolicyFallback`，默认 `HIDDEN`；非法 `accessLevel` 仍按 `HIDDEN` 失败关闭，不会被 fallback 放宽。权限只能收紧：设计时隐藏或只读的字段，节点传可编辑无效。
+未传映射时字段默认可编辑，文档 `required` 按 Schema 生效。传入映射后（包括 `{}`）键缺失走 `fieldRuntimePolicyFallback`，默认 `HIDDEN`；非法 `accessLevel` 仍按 `HIDDEN` 失败关闭，不会被 fallback 放宽。权限只能收紧：设计时隐藏或只读的字段，运行时传入可编辑无效。
 
-DX BPM 传入策略时固定 `fieldRuntimePolicyFallback: 'HIDDEN'`，并按节点给出完整字段投影。节点之间的必填差异换该节点自己的设计文档，不要把必填写进策略。公开契约仍允许 `EDITABLE` fallback，只给「只传关心的字段」的非 BPM 宿主使用。
+完整投影时应固定 `fieldRuntimePolicyFallback: 'HIDDEN'`，并补齐表单所有字段。不同场景的必填差异换该场景自己的设计文档，不要把必填写进策略。公开契约仍允许 `EDITABLE` fallback，只给「只传关心的字段」的部分投影使用。
 
-同一份设计文档里金额字段 `required: true` 时，三个节点的表现如下。红星来自解析后的 `readFieldState(...).required`，不是策略里的第四个值。
+同一份设计文档里金额字段 `required: true` 时，三种访问级别的表现如下。红星来自解析后的 `readFieldState(...).required`，不是策略里的第四个值。
 
-| 节点 `accessLevel` | 渲染     | 红星 / 必填校验 | 用户提交   |
-| ------------------- | -------- | -------------- | ---------- |
+| `accessLevel` | 渲染     | 红星 / 必填校验 | 用户提交   |
+| ------------- | -------- | -------------- | ---------- |
 | `EDITABLE`          | 可编辑   | 生效           | 按提交策略 |
 | `READ_ONLY`         | 只展示   | 不校验         | 不提交     |
 | `HIDDEN`            | 不渲染   | 不校验         | 不提交     |
 
 ```ts
-// 填写节点：amount 可编辑，文档 required 生效
+// 可编辑：amount 可改，文档 required 生效
 const session = createDesignerRuntimeSession({
   document,
   mode: 'EDIT',
@@ -150,7 +150,7 @@ const session = createDesignerRuntimeSession({
   },
 })
 
-// 审批只读：amount 仍展示，但无红星、不校验、不进入用户提交
+// 只读：amount 仍展示，但无红星、不校验、不进入用户提交
 session.updateRuntimePolicy({
   fieldRuntimePolicy: {
     [titleFieldId]: { accessLevel: 'READ_ONLY' },
@@ -159,7 +159,7 @@ session.updateRuntimePolicy({
   },
 })
 
-// 审批隐藏：amount 不渲染、不校验、不提交
+// 隐藏：amount 不渲染、不校验、不提交
 session.updateRuntimePolicy({
   fieldRuntimePolicy: {
     [titleFieldId]: { accessLevel: 'READ_ONLY' },
@@ -169,16 +169,16 @@ session.updateRuntimePolicy({
 })
 ```
 
-上面三段分别是填写、审批只读、审批隐藏。切换节点用 `session.updateRuntimePolicy({ fieldRuntimePolicy })`，不要重建会话，也不必每次重传 fallback（已是 `HIDDEN` 时保持即可）。已填值保留；变成只读或隐藏后不再校验该字段必填，也不会写入用户提交。
+上面三段分别是可编辑、只读、隐藏。切换权限用 `session.updateRuntimePolicy({ fieldRuntimePolicy })`，不要重建会话，也不必每次重传 fallback（已是 `HIDDEN` 时保持即可）。已填值保留；变成只读或隐藏后不再校验该字段必填，也不会写入用户提交。
 
 传入策略后，**未出现在映射里的字段**按 fallback 处理，与上表同一套可见 / 必填 / 提交规则：
 
 | `fieldRuntimePolicyFallback` | 未列出且文档 `required: true` 的字段 |
 | ----------------------------- | ------------------------------------ |
-| `HIDDEN`（默认，BPM 固定）    | 隐藏，不校验，不提交                 |
+| `HIDDEN`（默认）              | 隐藏，不校验，不提交                 |
 | `EDITABLE`                    | 按文档可编辑，继承必填，按提交策略    |
 
-流程审批因此应走完整投影：节点权限里补齐表单所有字段，漏传即隐藏。非 BPM 宿主若只传做过特殊控制的字段，必须显式设 `fieldRuntimePolicyFallback: 'EDITABLE'`，此时未列出字段会继承设计文档必填。
+按场景裁剪字段时应走完整投影：策略里补齐表单所有字段，漏传即隐藏。只传做过特殊控制的字段时，必须显式设 `fieldRuntimePolicyFallback: 'EDITABLE'`，此时未列出字段会继承设计文档必填。
 
 容器条件显隐会进一步收紧字段状态：隐藏分组、标签页或子表后，内部字段视为不可见，因此不校验、不提交、拒绝写入。同一字段出现在多处时，任一可见路径即可显示。单个标签页的显隐尚未支持。
 
@@ -200,7 +200,7 @@ session.updateRuntimePolicy({
 
 确定拒绝、版本冲突和权限拒绝保留输入与意图，只解除保存冻结，不建立成功基线，也不自动重试覆盖最新值。网络结果未知时保留原批次与幂等标识，继续查询原批次结果；不能把超时当成未执行并创建新批次。旧会话的迟到回执不能污染新文档。
 
-普通 `submit` 事件表示生成前端投影，不代表数据库提交成功。审批保存、同意、拒绝等动作由宿主决定何时准备提交和如何消费回执；动作弹窗复用当前表单会话。
+普通 `submit` 事件表示生成前端投影，不代表数据库提交成功。宿主自己的保存动作决定何时准备提交和如何消费回执；动作弹窗复用当前表单会话。
 
 宿主应按以下顺序处理批次：
 
@@ -238,7 +238,7 @@ session.applyReceipt(receipt)
 
 旧文档和旧一级表单按兼容入口处理。新增关系种类、共享目标字段与嵌套布局需要使用新版语义模型；迁移后不默认获得新的关系权限。不支持的结构应返回诊断，不能截断后继续保存。
 
-旧 BPM 把必填编码成第四种权限值 `REQUIRED`。现在只能映射为 `EDITABLE`，必填须在表单设计里配置。如果旧流程靠节点级 `REQUIRED` 实现「仅该节点必填」，迁移后这个差异会丢失。
+历史上曾把必填编码成第四种权限值 `REQUIRED`。现在只能映射为 `EDITABLE`，必填须在表单设计里配置。如果旧数据靠运行策略实现「仅该场景必填」，迁移后这个差异会丢失。
 
 新设计文档使用 `documentVersion: '2.0'`，关系类型区分 `ONE_TO_MANY` 与 `MANY_TO_MANY`，实体统一登记于 `dataSchema.entities`。M:N 的 `childEntity` 表示关联记录实体，`targetEntity` 表示共享目标；运行值版本独立为 `runtimeVersion: '1.0'`，保存操作版本独立为 `protocolVersion: '1.0'`。
 
@@ -248,7 +248,7 @@ session.applyReceipt(receipt)
 
 ## 宿主边界与验收
 
-DX BPM 工厂允许通过 `extras` 注入关系端口。业务路径、认证、租户、响应包络、幂等记录、事务和审批语义均由宿主管理；组件包不为尚未确定的服务端协议拼接地址。
+Adapter 工厂允许通过 `extras` 注入关系端口。业务路径、认证、租户、响应包络、幂等记录和事务语义均由宿主管理；组件包不为尚未确定的服务端协议拼接地址。
 
 不透明宿主引用只存在运行值和 Adapter 上下文中，不写入设计文档、Schema、演示数据、日志或公开截图。仓库关系演示仅使用公开虚拟记录。
 
