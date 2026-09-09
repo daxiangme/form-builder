@@ -146,7 +146,7 @@ function handleSubmit(projection: DesignerSubmissionProjection) {
 
 一旦传入策略对象（包括 `{}`）：
 
-- 键缺失走 `fieldRuntimePolicyFallback`，默认 `HIDDEN`。宿主只传节点上做过特殊控制的字段时须显式设为 `EDITABLE`。
+- 键缺失走 `fieldRuntimePolicyFallback`，默认 `HIDDEN`（不渲染、不校验、不提交）。DX BPM 固定该值。仅非 BPM 宿主只传关心的字段时才显式设为 `EDITABLE`，此时未列出字段按文档可编辑并继承 `required`。
 - 非法 `accessLevel`（含历史 `REQUIRED`）仍按 `HIDDEN` 失败关闭，不会被 fallback 放宽。
 - 权限只能收紧：设计时隐藏或只读的字段，运行时传入 `EDITABLE` 无效。
 
@@ -156,7 +156,7 @@ function handleSubmit(projection: DesignerSubmissionProjection) {
 | `READ_ONLY` | 只展示 | 不校验             | 不提交     | 拒绝                          |
 | `EDITABLE`  | 正常   | 设计文档必填与规则 | 按提交策略 | 允许                          |
 
-必填只来自表单设计。隐藏或只读字段自动不必填。文档里的条件规则 `target: 'REQUIRED'` 仍然属于 Schema，不是宿主权限。旧 BPM 节点权限 `REQUIRED` 映射为 `EDITABLE`，若旧流程靠节点级必填实现「仅该节点必填」，迁移后这个差异会丢失。
+必填只来自表单设计。隐藏或只读字段自动不必填。文档里的条件规则 `target: 'REQUIRED'` 仍然属于 Schema，不是宿主权限。旧 BPM 节点权限 `REQUIRED` 映射为 `EDITABLE`，若旧流程靠节点级必填实现「仅该节点必填」，迁移后这个差异会丢失。同一字段在填写 / 只读 / 隐藏节点下的红星、校验、提交以及 `session.updateRuntimePolicy` 示例见[关系接入文档的权限投影](docs/relations.md#权限投影)。
 
 公式（`FORMULA`）可以刷新只读字段的展示值，但不能放宽宿主权限。联动（`LINKAGE`）和事件流写入必须遵守 `HIDDEN` / `READ_ONLY`。文档 `display.readonly` 仍可进入提交；宿主 `READ_ONLY` 不会进入用户提交。
 
@@ -244,7 +244,7 @@ import {
 2. 样式改为 `import 'el-form-gen/style.css'`。
 3. 组件与插件改为 `ElFormDesigner`、`ElFormRenderer`、`ElFormGenPlugin`；无前缀别名已删除。
 4. 渲染器 prop `fieldAccess` 改为 `fieldRuntimePolicy`。
-5. 旧访问级别 `REQUIRED` 映射为 `{ accessLevel: 'EDITABLE' }`，必填在表单设计里配置。
+5. 旧访问级别 `REQUIRED` 映射为 `{ accessLevel: 'EDITABLE' }`，必填在表单设计里配置。传入 `fieldRuntimePolicy` 时默认 `HIDDEN` fallback；BPM 固定该值。
 
 ## 0.3 关系运行会话
 
@@ -258,7 +258,7 @@ import {
 
 1. 宿主依赖改为 `el-form-gen`，不再安装 `@daxiangme/form-vue`。
 2. 运行策略的键必须是表单字段 **ID**，不要用数据模型 `fieldPath`。需要先把 BPM 字段路径解析到 `DesignerField.id`。
-3. 历史节点权限 `REQUIRED` 转换为 `{ accessLevel: 'EDITABLE' }`，必填在表单设计里配置。`HIDDEN` 与 `READ_ONLY` 保持原语义。若旧流程靠节点级 `REQUIRED` 实现「仅该节点必填」，迁移后这个差异会丢失。
+3. 历史节点权限 `REQUIRED` 转换为 `{ accessLevel: 'EDITABLE' }`，必填在表单设计里配置。`HIDDEN` 与 `READ_ONLY` 保持原语义。传入 `fieldRuntimePolicy` 时固定 `fieldRuntimePolicyFallback: 'HIDDEN'`。节点之间的必填差异换该节点自己的设计文档。若旧流程靠节点级 `REQUIRED` 实现「仅该节点必填」，迁移后这个差异会丢失。
 4. 通过 `createDxBpmFormAdapter` 注入传输端口；Token、租户和 Axios 生命周期仍由宿主负责。
 
 ## 高级扩展与内部架构

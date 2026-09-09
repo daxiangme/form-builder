@@ -141,7 +141,7 @@ function handleSubmit(projection: DesignerSubmissionProjection) {
 
 一旦传入策略对象（包括 `{}`）：
 
-- 键缺失走 `fieldRuntimePolicyFallback`，默认 `HIDDEN`。宿主只传关心的字段时须显式设为 `EDITABLE`。
+- 键缺失走 `fieldRuntimePolicyFallback`，默认 `HIDDEN`（不渲染、不校验、不提交）。DX BPM 固定该值。仅非 BPM 宿主只传关心的字段时才显式设为 `EDITABLE`，此时未列出字段按文档可编辑并继承 `required`。
 - 非法 `accessLevel`（含历史 `REQUIRED`）仍按 `HIDDEN` 失败关闭，不会被 fallback 放宽。
 - 权限只能收紧：设计时隐藏或只读的字段，运行时传入 `EDITABLE` 无效。
 
@@ -151,7 +151,7 @@ function handleSubmit(projection: DesignerSubmissionProjection) {
 | `READ_ONLY` | 只展示 | 不校验             | 不提交     | 拒绝                          |
 | `EDITABLE`  | 正常   | 设计文档必填与规则 | 按提交策略 | 允许                          |
 
-必填只来自表单设计。隐藏或只读字段自动不必填。旧 BPM 节点权限 `REQUIRED` 映射为 `EDITABLE`，必填须在设计文档里配置。
+必填只来自表单设计。隐藏或只读字段自动不必填。旧 BPM 节点权限 `REQUIRED` 映射为 `EDITABLE`，必填须在设计文档里配置。同一字段在填写 / 只读 / 隐藏节点下的对照表与 `session.updateRuntimePolicy` 示例见[关系接入文档的权限投影](https://github.com/daxiangme/form-builder/blob/main/docs/relations.md#权限投影)。
 
 公式可以刷新只读展示，但不能放宽宿主权限。
 
@@ -165,7 +165,7 @@ const fieldRuntimePolicy: FormFieldRuntimePolicyMap = {
 <ElFormRenderer
   :document="document"
   :field-runtime-policy="fieldRuntimePolicy"
-  field-runtime-policy-fallback="EDITABLE"
+  field-runtime-policy-fallback="HIDDEN"
 />
 ```
 
@@ -211,7 +211,7 @@ import {
 
 ## 后续 DX BPM 接入
 
-本轮不修改 DX BPM。后续请：把依赖换成 `el-form-gen`；把权限键从字段路径映射到字段 ID；把旧 `REQUIRED` 写成 `{ accessLevel: 'EDITABLE' }`，必填在表单设计里配置。
+本轮不修改 DX BPM。后续请：把依赖换成 `el-form-gen`；把权限键从字段路径映射到字段 ID；把旧 `REQUIRED` 写成 `{ accessLevel: 'EDITABLE' }`；传入策略时固定 `fieldRuntimePolicyFallback: 'HIDDEN'`；节点之间的必填差异换该节点自己的设计文档。
 
 ## 高级扩展与内部架构
 

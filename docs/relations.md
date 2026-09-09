@@ -123,16 +123,62 @@ async function save(batch: DesignerSubmissionBatch): Promise<void> {
 
 ## 权限投影
 
-继续使用以字段 ID 为键的 `fieldRuntimePolicy`，每项只有 `accessLevel: 'EDITABLE' | 'READ_ONLY' | 'HIDDEN'`。设计文档不保存权限；必填由设计配置决定，节点权限不能临时把字段变成必填。
+继续使用以字段 ID 为键的 `fieldRuntimePolicy`，每项只有 `accessLevel: 'EDITABLE' | 'READ_ONLY' | 'HIDDEN'`。设计文档不保存权限；必填由设计配置决定，节点权限不能临时把字段变成必填。只读和隐藏始终取消必填：不显示红星、不跑必填校验、不进入用户提交。
 
-未传映射时字段默认可编辑。传入映射后键缺失走 `fieldRuntimePolicyFallback`（默认 `HIDDEN`）；非法值仍按 `HIDDEN` 失败关闭。权限只能收紧：设计时隐藏或只读的字段，节点传可编辑无效。
+未传映射时字段默认可编辑，文档 `required` 按 Schema 生效。传入映射后（包括 `{}`）键缺失走 `fieldRuntimePolicyFallback`，默认 `HIDDEN`；非法 `accessLevel` 仍按 `HIDDEN` 失败关闭，不会被 fallback 放宽。权限只能收紧：设计时隐藏或只读的字段，节点传可编辑无效。
 
-流程审批有两种接入方式：
+DX BPM 传入策略时固定 `fieldRuntimePolicyFallback: 'HIDDEN'`，并按节点给出完整字段投影。节点之间的必填差异换该节点自己的设计文档，不要把必填写进策略。公开契约仍允许 `EDITABLE` fallback，只给「只传关心的字段」的非 BPM 宿主使用。
 
-- **完整投影**：节点权限里补齐表单所有字段，缺省隐藏可以当作配置遗漏的保护网。
-- **部分投影**：只传节点上做过特殊控制的字段，同时把 `fieldRuntimePolicyFallback` 设为 `EDITABLE`。
+同一份设计文档里金额字段 `required: true` 时，三个节点的表现如下。红星来自解析后的 `readFieldState(...).required`，不是策略里的第四个值。
 
-切换审批节点时使用 `session.updateRuntimePolicy({ fieldRuntimePolicy })`，不要替换整个会话。
+| 节点 `accessLevel` | 渲染     | 红星 / 必填校验 | 用户提交   |
+| ------------------- | -------- | -------------- | ---------- |
+| `EDITABLE`          | 可编辑   | 生效           | 按提交策略 |
+| `READ_ONLY`         | 只展示   | 不校验         | 不提交     |
+| `HIDDEN`            | 不渲染   | 不校验         | 不提交     |
+
+```ts
+// 填写节点：amount 可编辑，文档 required 生效
+const session = createDesignerRuntimeSession({
+  document,
+  mode: 'EDIT',
+  fieldRuntimePolicyFallback: 'HIDDEN',
+  fieldRuntimePolicy: {
+    [titleFieldId]: { accessLevel: 'EDITABLE' },
+    [amountFieldId]: { accessLevel: 'EDITABLE' },
+    [commentFieldId]: { accessLevel: 'HIDDEN' },
+  },
+})
+
+// 审批只读：amount 仍展示，但无红星、不校验、不进入用户提交
+session.updateRuntimePolicy({
+  fieldRuntimePolicy: {
+    [titleFieldId]: { accessLevel: 'READ_ONLY' },
+    [amountFieldId]: { accessLevel: 'READ_ONLY' },
+    [commentFieldId]: { accessLevel: 'HIDDEN' },
+  },
+})
+
+// 审批隐藏：amount 不渲染、不校验、不提交
+session.updateRuntimePolicy({
+  fieldRuntimePolicy: {
+    [titleFieldId]: { accessLevel: 'READ_ONLY' },
+    [amountFieldId]: { accessLevel: 'HIDDEN' },
+    [commentFieldId]: { accessLevel: 'HIDDEN' },
+  },
+})
+```
+
+上面三段分别是填写、审批只读、审批隐藏。切换节点用 `session.updateRuntimePolicy({ fieldRuntimePolicy })`，不要重建会话，也不必每次重传 fallback（已是 `HIDDEN` 时保持即可）。已填值保留；变成只读或隐藏后不再校验该字段必填，也不会写入用户提交。
+
+传入策略后，**未出现在映射里的字段**按 fallback 处理，与上表同一套可见 / 必填 / 提交规则：
+
+| `fieldRuntimePolicyFallback` | 未列出且文档 `required: true` 的字段 |
+| ----------------------------- | ------------------------------------ |
+| `HIDDEN`（默认，BPM 固定）    | 隐藏，不校验，不提交                 |
+| `EDITABLE`                    | 按文档可编辑，继承必填，按提交策略    |
+
+流程审批因此应走完整投影：节点权限里补齐表单所有字段，漏传即隐藏。非 BPM 宿主若只传做过特殊控制的字段，必须显式设 `fieldRuntimePolicyFallback: 'EDITABLE'`，此时未列出字段会继承设计文档必填。
 
 容器条件显隐会进一步收紧字段状态：隐藏分组、标签页或子表后，内部字段视为不可见，因此不校验、不提交、拒绝写入。同一字段出现在多处时，任一可见路径即可显示。单个标签页的显隐尚未支持。
 
