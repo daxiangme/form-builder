@@ -4,6 +4,7 @@ import { diagnoseDesignerExpression, resolveDesignerFieldEvaluationOrder } from 
 import { isSafeDesignerRegularExpression } from './validation'
 import type {
   DesignerActionBar,
+  DesignerContainerBehavior,
   DesignerDiagnostic,
   DesignerDocument,
   DesignerEventActionType,
@@ -40,6 +41,11 @@ export function createDefaultDesignerFieldBehavior(): DesignerFieldBehavior {
   }
 }
 
+/** 创建容器高级行为默认值。 */
+export function createDefaultDesignerContainerBehavior(): DesignerContainerBehavior {
+  return { stateRules: [] }
+}
+
 /**
  * 在克隆后的文档中补齐高级协议默认值。
  *
@@ -70,6 +76,13 @@ export function normalizeDesignerAdvancedDocument(source: Record<string, unknown
     source.i18n = { enabled: false, defaultLocale: 'zh-CN', locales: ['zh-CN'], entries: [] }
   }
   const dataSchema = isRecord(source.dataSchema) ? source.dataSchema : undefined
+  if (uiSchema && Array.isArray(uiSchema.root)) normalizeContainerBehaviors(uiSchema.root)
+  if (uiSchema && Array.isArray(uiSchema.overlays)) {
+    for (const overlay of uiSchema.overlays) {
+      if (isRecord(overlay) && Array.isArray(overlay.root))
+        normalizeContainerBehaviors(overlay.root)
+    }
+  }
   if (!dataSchema || !Array.isArray(dataSchema.fields)) return
   for (const rawField of dataSchema.fields) {
     if (!isRecord(rawField)) continue
@@ -141,6 +154,7 @@ export function diagnoseDesignerAdvancedDocument(document: DesignerDocument): De
   const hasOverlays = Array.isArray(uiSchema?.overlays)
   if (uiSchema) diagnoseOverlays(document, result)
   if (hasFields) diagnoseFieldBehaviors(document, result)
+  if (Array.isArray(uiSchema?.root)) diagnoseContainerBehaviors(document, result)
   if (
     hasFields &&
     hasOverlays &&
@@ -586,6 +600,19 @@ function diagnoseOverlays(document: DesignerDocument, result: DesignerDiagnostic
   })
 }
 
+function normalizeContainerBehaviors(nodes: unknown[]): void {
+  for (const raw of nodes) {
+    if (!isRecord(raw) || raw.nodeType !== 'CONTAINER') continue
+    if (!isRecord(raw.behavior)) raw.behavior = createDefaultDesignerContainerBehavior()
+    else if (!('stateRules' in raw.behavior)) raw.behavior.stateRules = []
+    const slots = raw.slots
+    if (!Array.isArray(slots)) continue
+    for (const slot of slots) {
+      if (isRecord(slot) && Array.isArray(slot.children)) normalizeContainerBehaviors(slot.children)
+    }
+  }
+}
+
 function diagnoseFieldBehaviors(document: DesignerDocument, result: DesignerDiagnostic[]): void {
   const flowCodes = new Set(
     (Array.isArray(document.eventFlows) ? document.eventFlows : []).map((flow) => flow.code),
@@ -654,19 +681,67 @@ function diagnoseFieldBehaviors(document: DesignerDocument, result: DesignerDiag
   })
 }
 
+function diagnoseContainerBehaviors(
+  document: DesignerDocument,
+  result: DesignerDiagnostic[],
+): void {
+  const visit = (nodes: DesignerLayoutNode[], path: string, entityCode: string): void => {
+    nodes.forEach((node, index) => {
+      const nodePath = `${path}[${index}]`
+      if (node.nodeType !== 'CONTAINER') return
+      const behaviorPath = `${nodePath}.behavior`
+      const behavior = node.behavior
+      if (!isRecord(behavior)) {
+        result.push(error('CONTAINER_BEHAVIOR', '容器行为必须是对象', behaviorPath))
+        return
+      }
+      unknownKeys(
+        behavior,
+        ['stateRules'],
+        behaviorPath,
+        'CONTAINER_BEHAVIOR_UNKNOWN_PROPERTY',
+        result,
+      )
+      diagnoseStateRules(
+        behavior.stateRules,
+        document,
+        `${behaviorPath}.stateRules`,
+        entityCode !== document.dataSchema.rootEntity.code,
+        result,
+        ['VISIBLE'],
+      )
+      const relation = document.dataSchema.relations.find(
+        (item) => item.code === node.configuration.relationCode,
+      )
+      const childCode = relation?.childEntity.code ?? entityCode
+      node.slots.forEach((slot, slotIndex) => {
+        visit(slot.children, `${nodePath}.slots[${slotIndex}].children`, childCode)
+      })
+    })
+  }
+  visit(document.uiSchema.root, '$.uiSchema.root', document.dataSchema.rootEntity.code)
+  document.uiSchema.overlays.forEach((overlay, overlayIndex) => {
+    const overlayCode =
+      document.dataSchema.entities.find((entity) => entity.id === overlay.contextEntityId)?.code ??
+      document.dataSchema.rootEntity.code
+    visit(overlay.root, `$.uiSchema.overlays[${overlayIndex}].root`, overlayCode)
+  })
+}
+
 function diagnoseStateRules(
   source: unknown,
   document: DesignerDocument,
   path: string,
   allowCurrentRow: boolean,
   result: DesignerDiagnostic[],
+  allowedTargets: Array<'VISIBLE' | 'REQUIRED' | 'DISABLED'> = ['VISIBLE', 'REQUIRED', 'DISABLED'],
 ): void {
   if (!Array.isArray(source))
-    return void result.push(error('STATE_RULES', '字段状态规则必须是数组', path))
+    return void result.push(error('STATE_RULES', '状态规则必须是数组', path))
   source.forEach((rule, index) => {
     const itemPath = `${path}[${index}]`
     if (!isRecord(rule))
-      return void result.push(error('STATE_RULE', '字段状态规则必须是对象', itemPath))
+      return void result.push(error('STATE_RULE', '状态规则必须是对象', itemPath))
     unknownKeys(
       rule,
       ['id', 'target', 'condition', 'valueWhenTrue', 'valueWhenFalse'],
@@ -675,12 +750,12 @@ function diagnoseStateRules(
       result,
     )
     if (
-      !['VISIBLE', 'REQUIRED', 'DISABLED'].includes(String(rule.target)) ||
+      !allowedTargets.includes(rule.target as never) ||
       typeof rule.id !== 'string' ||
       typeof rule.valueWhenTrue !== 'boolean' ||
       (rule.valueWhenFalse !== undefined && typeof rule.valueWhenFalse !== 'boolean')
     )
-      result.push(error('STATE_RULE_VALUE', '字段状态规则配置不正确', itemPath))
+      result.push(error('STATE_RULE_VALUE', '状态规则配置不正确', itemPath))
     result.push(
       ...diagnoseDesignerExpression(rule.condition, document, `${itemPath}.condition`, {
         allowCurrentRow,
@@ -1500,6 +1575,23 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function expressionEntityCode(document: DesignerDocument, path: string): string | undefined {
   const fieldIndex = /dataSchema\.fields\[(\d+)\]/.exec(path)?.[1]
   if (fieldIndex !== undefined) return document.dataSchema.fields[Number(fieldIndex)]?.entityCode
+  const overlayMatch = /uiSchema\.overlays\[(\d+)\]\.root(.*)$/.exec(path)
+  if (overlayMatch) {
+    const overlay = document.uiSchema.overlays[Number(overlayMatch[1])]
+    const startCode =
+      document.dataSchema.entities.find((entity) => entity.id === overlay?.contextEntityId)?.code ??
+      document.dataSchema.rootEntity.code
+    return walkUiSchemaExpressionPath(document, overlay?.root ?? [], startCode, overlayMatch[2])
+  }
+  const rootMatch = /uiSchema\.root(.*)$/.exec(path)
+  if (rootMatch) {
+    return walkUiSchemaExpressionPath(
+      document,
+      document.uiSchema.root,
+      document.dataSchema.rootEntity.code,
+      rootMatch[1],
+    )
+  }
   const flowIndex = /eventFlows\[(\d+)\]/.exec(path)?.[1]
   const flow = flowIndex === undefined ? undefined : document.eventFlows[Number(flowIndex)]
   if (flow?.trigger.scope !== 'COMPONENT') return document.dataSchema.rootEntity.code
@@ -1529,5 +1621,36 @@ function expressionEntityCode(document: DesignerDocument, path: string): string 
         ),
       )
       .find(Boolean)
+  )
+}
+
+function walkUiSchemaExpressionPath(
+  document: DesignerDocument,
+  nodes: DesignerLayoutNode[],
+  entityCode: string,
+  suffix: string,
+): string {
+  const indexMatch = /^\[(\d+)\]/.exec(suffix)
+  if (!indexMatch) return entityCode
+  const node = nodes[Number(indexMatch[1])]
+  if (!node) return entityCode
+  let nextCode = entityCode
+  if (node.nodeType === 'CONTAINER') {
+    const relation = document.dataSchema.relations.find(
+      (item) => item.code === node.configuration.relationCode,
+    )
+    if (relation) nextCode = relation.childEntity.code
+  }
+  const rest = suffix.slice(indexMatch[0].length)
+  if (!rest.startsWith('.slots[')) return nextCode
+  if (node.nodeType !== 'CONTAINER') return nextCode
+  const slotMatch = /^\.slots\[(\d+)\]\.children/.exec(rest)
+  if (!slotMatch) return nextCode
+  const slot = node.slots[Number(slotMatch[1])]
+  return walkUiSchemaExpressionPath(
+    document,
+    slot?.children ?? [],
+    nextCode,
+    rest.slice(slotMatch[0].length),
   )
 }

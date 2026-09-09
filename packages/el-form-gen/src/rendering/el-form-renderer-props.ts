@@ -4,6 +4,7 @@ import type {
   DesignerRuntimeAdapters,
   DesignerRuntimeMode,
   DesignerRuntimeValueStore,
+  FormFieldAccessFallback,
   FormFieldRuntimePolicyMap,
   FormRuntimeAdapterContext,
   DesignerRuntimeSession,
@@ -20,9 +21,15 @@ export interface ElFormRendererLegacyProps {
   /**
    * 宿主字段运行策略。
    *
-   * 未传时按独立表单 Schema 工作。传入后视为完整权威投影，缺失或非法字段按 HIDDEN 失败关闭。
+   * 未传时按独立表单 Schema 工作。传入后视为完整权威投影；键缺失走 fieldRuntimePolicyFallback，非法访问级别仍按 HIDDEN。
    */
   fieldRuntimePolicy?: FormFieldRuntimePolicyMap
+  /**
+   * 传入字段策略后未列出字段的缺省访问级别。
+   *
+   * 默认 HIDDEN。宿主只传关心的字段时须显式设为 EDITABLE。
+   */
+  fieldRuntimePolicyFallback?: FormFieldAccessFallback
   /** 呈现设备，默认 desktop。 */
   device?: DesignerDevice
   /** 宿主细粒度能力。 */
@@ -61,6 +68,8 @@ export interface ElFormRendererSessionProps {
   mode?: never
   /** 字段权限通过 session.updateRuntimePolicy 更新。 */
   fieldRuntimePolicy?: never
+  /** 权限缺省通过 session.updateRuntimePolicy 更新。 */
+  fieldRuntimePolicyFallback?: never
   /** Adapter 在创建 session 时注入。 */
   adapters?: never
   /** 上下文在创建 session 时注入。 */

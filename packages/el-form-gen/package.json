@@ -1,6 +1,6 @@
 {
   "name": "el-form-gen",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Vue 3 + Element Plus 可视化表单设计器与运行渲染器；Form Gen 包含设计与渲染，不表示代码生成",
   "type": "module",
   "license": "MIT",

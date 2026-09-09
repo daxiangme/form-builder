@@ -78,11 +78,11 @@
         :active-module="activeModule"
         :overlay-only="Boolean(activeModule)"
         :field-runtime-policy="fieldRuntimePolicy"
+        :field-runtime-policy-fallback="fieldRuntimePolicyFallback"
         :adapters="localAdapter.adapters"
         :adapter-context="adapterContext"
         show-toolbar
         @submit="handleSubmit"
-        @runtime-warning="showWarning"
         @overlay-closed="activeModule = ''"
       />
     </section>
@@ -110,11 +110,12 @@ import {
   type DesignerRuntimeMode,
   type DesignerRuntimeValueStore,
   type DesignerSubmissionProjection,
+  type FormFieldAccessFallback,
   type FormFieldRuntimePolicyMap,
 } from 'el-form-gen'
 
 type RuntimeMode = Exclude<DesignerRuntimeMode, 'DESIGN'>
-type PolicyScenario = 'SCHEMA' | 'ALL_EDITABLE' | 'MIXED' | 'EMPTY'
+type PolicyScenario = 'SCHEMA' | 'ALL_EDITABLE' | 'MIXED' | 'EMPTY' | 'PARTIAL_EDITABLE'
 
 const workspaceOptions = [
   { label: '设计器', value: 'DESIGN' },
@@ -125,7 +126,8 @@ const workspaceOptions = [
 const policyScenarioOptions: Array<{ label: string; value: PolicyScenario }> = [
   { label: '独立 Schema（不传策略）', value: 'SCHEMA' },
   { label: '权威投影 · 全可编辑', value: 'ALL_EDITABLE' },
-  { label: '权威投影 · 三态+必填', value: 'MIXED' },
+  { label: '权威投影 · 三态权限', value: 'MIXED' },
+  { label: '部分投影 · 回退可编辑', value: 'PARTIAL_EDITABLE' },
   { label: '权威投影 · 空映射失败关闭', value: 'EMPTY' },
 ]
 const workspace = ref<'DESIGN' | 'RUNTIME' | 'RELATION_DESIGN' | 'RELATIONS'>('DESIGN')
@@ -153,6 +155,9 @@ const controlRadius = computed(() => document.value.appearance.controlRadius)
 const fieldRuntimePolicy = computed<FormFieldRuntimePolicyMap | undefined>(() =>
   buildFieldRuntimePolicy(document.value, policyScenario.value),
 )
+const fieldRuntimePolicyFallback = computed<FormFieldAccessFallback | undefined>(() =>
+  policyScenario.value === 'PARTIAL_EDITABLE' ? 'EDITABLE' : undefined,
+)
 
 watch(dark, (enabled) => globalThis.document.documentElement.classList.toggle('dark', enabled), {
   immediate: true,
@@ -173,10 +178,6 @@ function showMessage(message: string): void {
   ElMessage.success(message)
 }
 
-function showWarning(message: string): void {
-  ElMessage.warning(message)
-}
-
 function handleSubmit(projection: DesignerSubmissionProjection): void {
   console.info(projection)
   showMessage(`宿主已收到提交投影，排除 ${projection.excludedFieldIds.length} 个字段`)
@@ -190,6 +191,10 @@ function buildFieldRuntimePolicy(
   if (scenario === 'EMPTY') return {}
   const rootCode = formDocument.dataSchema.rootEntity.code
   const rootFields = formDocument.dataSchema.fields.filter((field) => field.entityCode === rootCode)
+  if (scenario === 'PARTIAL_EDITABLE') {
+    const first = rootFields[0]
+    return first ? { [first.id]: { accessLevel: 'READ_ONLY' } } : {}
+  }
   return Object.fromEntries(
     formDocument.dataSchema.fields.map((field) => {
       if (scenario === 'ALL_EDITABLE') return [field.id, { accessLevel: 'EDITABLE' as const }]
@@ -204,7 +209,6 @@ function buildFieldRuntimePolicy(
         ]
       }
       const index = rootFields.findIndex((item) => item.id === field.id)
-      if (index === 0) return [field.id, { accessLevel: 'EDITABLE' as const, required: true }]
       if (index === 1) return [field.id, { accessLevel: 'READ_ONLY' as const }]
       if (index === 2) return [field.id, { accessLevel: 'HIDDEN' as const }]
       return [field.id, { accessLevel: 'EDITABLE' as const }]
@@ -220,6 +224,37 @@ function createPlaygroundDocument(): DesignerDocument {
     sourceId:
       'expense-application-master-data-model-very-long-identity-for-narrow-inspector-2026-candidate',
     sourceRevision: 17,
+  }
+  const typeField = value.dataSchema.fields.find((field) => field.label === '申请类型')
+  const noteField = value.dataSchema.fields.find((field) => field.label === '申请说明')
+  if (noteField) noteField.required = true
+  const noteIndex = value.uiSchema.root.findIndex(
+    (node) => node.nodeType === 'FIELD' && node.fieldId === noteField?.id,
+  )
+  const group = createNodeFromComponent(value, 'group', {
+    configuration: { title: '申请说明（选择类型后显示）' },
+  })
+  if (group?.nodeType === 'CONTAINER' && noteIndex >= 0) {
+    const [noteNode] = value.uiSchema.root.splice(noteIndex, 1)
+    if (noteNode) group.slots[0]?.children.push(noteNode)
+    if (typeField) {
+      group.behavior = {
+        stateRules: [
+          {
+            id: 'playground-note-visible',
+            target: 'VISIBLE',
+            valueWhenTrue: true,
+            valueWhenFalse: false,
+            condition: {
+              kind: 'CALL',
+              function: 'NOT_EMPTY',
+              arguments: [{ kind: 'FIELD', fieldId: typeField.id, scope: 'ROOT' }],
+            },
+          },
+        ],
+      }
+    }
+    value.uiSchema.root.splice(noteIndex, 0, group)
   }
   const subtable = createNodeFromComponent(value, 'row-subtable', {
     label: '费用明细',

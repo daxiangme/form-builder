@@ -2,6 +2,7 @@ import type {
   DesignerField,
   DesignerResolvedFieldState,
   DesignerRuntimeMode,
+  FormFieldAccessFallback,
   FormFieldAccessLevel,
   FormFieldRuntimePolicy,
   FormFieldRuntimePolicyMap,
@@ -53,6 +54,16 @@ export function isDesignerFieldAccessLevel(value: unknown): value is FormFieldAc
 }
 
 /**
+ * 判断取值是否为合法的权限缺省回退。
+ *
+ * @param value 待检查值
+ * @returns 仅 HIDDEN、EDITABLE 返回 true
+ */
+export function isDesignerFieldAccessFallback(value: unknown): value is FormFieldAccessFallback {
+  return value === 'HIDDEN' || value === 'EDITABLE'
+}
+
+/**
  * 判断宿主访问级别是否允许用户、联动或事件写入。
  *
  * 未声明访问级别时视为独立表单，由文档规则继续收紧。HIDDEN 与 READ_ONLY 均不可写。
@@ -94,25 +105,27 @@ export function isDesignerFieldTargetedWriteAction(actionType: string): boolean 
 }
 
 /**
- * 读取字段运行策略；未传映射时返回 undefined，传入后缺失或非法字段失败关闭为 HIDDEN。
+ * 读取字段运行策略。
+ *
+ * 未传映射时返回 undefined。传入后键缺失走 fallback（默认 HIDDEN）；非法访问级别仍固定为 HIDDEN。
  *
  * @param policies 宿主运行策略投影
  * @param fieldId 字段 ID
+ * @param fallback 键缺失时的缺省访问级别
  * @returns 规范化策略；独立表单返回 undefined
  */
 export function readDesignerFieldRuntimePolicy(
   policies: FormFieldRuntimePolicyMap | undefined,
   fieldId: string,
+  fallback: FormFieldAccessFallback = 'HIDDEN',
 ): FormFieldRuntimePolicy | undefined {
   if (policies === undefined) return undefined
+  if (!Object.hasOwn(policies, fieldId)) return { accessLevel: fallback }
   const policy = policies[fieldId]
   if (!isRecord(policy) || !isDesignerFieldAccessLevel(policy.accessLevel)) {
     return { accessLevel: 'HIDDEN' }
   }
-  return {
-    accessLevel: policy.accessLevel,
-    required: policy.required === true ? true : undefined,
-  }
+  return { accessLevel: policy.accessLevel }
 }
 
 /**
@@ -120,7 +133,8 @@ export function readDesignerFieldRuntimePolicy(
  *
  * 未传策略时按独立表单 Schema 工作。传入策略后访问级别为权威投影，公式只能继续收紧，不能放宽宿主权限。
  *
- * 优先级：模式限制 → 宿主隐藏 → 宿主只读 → 可编辑模式下的宿主必填 → 文档状态收紧 → 公式只读。
+ * 优先级：模式限制 → 宿主隐藏 → 宿主只读 → 文档状态收紧 → 公式只读。
+ * 权限只能收紧：设计时隐藏或只读的字段，运行时传入可编辑无效。必填只来自设计文档，隐藏或只读时自动取消。
  *
  * @param field 当前字段
  * @param documentState 文档条件规则解析后的状态
@@ -156,8 +170,6 @@ export function applyDesignerFieldAccess(
     required = false
   } else if (!isDesignerRuntimeEditableMode(options.mode) || disabled) {
     required = false
-  } else if (options.policy?.required === true && access === 'EDITABLE') {
-    required = true
   }
 
   return { visible, required, disabled, accessLevel: access }

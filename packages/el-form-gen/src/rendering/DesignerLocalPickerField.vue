@@ -30,7 +30,6 @@
         </ElInput>
         <ElButton :loading="loading" @click="loadItems">查询</ElButton>
       </div>
-      <ElAlert v-if="loadError" type="error" :closable="false" :title="loadError" />
       <ElCheckboxGroup v-if="multiple" v-model="draftIds" class="designer-local-picker__records">
         <ElCheckbox v-for="item in items" :key="item.id" :value="item.id">
           <span>{{ item.label }}</span
@@ -43,7 +42,11 @@
           ><small>{{ item.description }}</small>
         </ElRadio>
       </ElRadioGroup>
-      <ElEmpty v-if="!loading && items.length === 0" description="没有匹配记录" :image-size="56" />
+      <ElEmpty
+        v-if="!loading && items.length === 0"
+        :description="loadError || '没有匹配记录'"
+        :image-size="56"
+      />
     </DModal>
   </div>
 </template>

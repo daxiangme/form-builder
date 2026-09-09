@@ -7,11 +7,13 @@ import {
 } from './expression'
 import {
   applyDesignerFieldAccess,
+  isDesignerFieldAccessFallback,
   isDesignerRuntimeWriteBlocked,
   readDesignerFieldRuntimePolicy,
 } from './field-access'
 import {
   resolveDesignerFieldState,
+  resolveDesignerNodeState,
   validateDesignerField,
   projectDesignerFieldFeedback,
 } from './validation'
@@ -24,7 +26,9 @@ import type {
   DesignerFormEvent,
   DesignerLayoutNode,
   DesignerResolvedFieldState,
+  DesignerResolvedNodeState,
   DesignerSubmissionProjection,
+  FormFieldAccessFallback,
   FormFieldRuntimePolicy,
   FormFieldRuntimePolicyMap,
 } from './types'
@@ -137,11 +141,17 @@ function createSession(
     failRuntime('LEGACY_RELATION_UNSUPPORTED', '旧快照模式仅支持一级一对多关系')
   const fields = new Map(document.dataSchema.fields.map((field) => [field.id, field]))
   const entityById = new Map(document.dataSchema.entities.map((entity) => [entity.id, entity]))
+  const fieldPlacements = indexFieldPlacements(document)
   const adapters = options.adapters ?? {}
   const adapterContext = cloneRuntime(options.adapterContext ?? {})
   const sessionId = createRuntimeKey('session')
   let mode = options.mode ?? 'CREATE'
   let globalFields = options.fieldRuntimePolicy
+  let fieldAccessFallback: FormFieldAccessFallback = isDesignerFieldAccessFallback(
+    options.fieldRuntimePolicyFallback,
+  )
+    ? options.fieldRuntimePolicyFallback
+    : 'HIDDEN'
   let policyResolver = options.relationRuntimePolicy
   let status: DesignerRuntimeSnapshot['status'] = 'READY'
   let revision = 0
@@ -536,7 +546,7 @@ function createSession(
       isTarget ? (policy.targetFields ?? {}) : policy.fields,
       field.id,
     )
-    const global = readDesignerFieldRuntimePolicy(globalFields, field.id)
+    const global = readDesignerFieldRuntimePolicy(globalFields, field.id, fieldAccessFallback)
     const intersection = intersectFieldPolicy(global, local)
     if (
       intersection.accessLevel === 'EDITABLE' &&
@@ -632,7 +642,23 @@ function createSession(
     )
       state.disabled = true
     if (state.disabled) state.required = false
+    const placements = fieldPlacements.get(fieldId)
+    if (
+      placements?.length &&
+      !placements.some((chain) =>
+        chain.every((containerId) => readNodeState(rowKey, containerId).visible),
+      )
+    ) {
+      state.visible = false
+      state.required = false
+    }
     return state
+  }
+  function readNodeState(rowKey: string, nodeId: string): DesignerResolvedNodeState {
+    const item = address(rowKey)
+    const node = findLayoutNode(nodeId)
+    if (!node) return { visible: false }
+    return resolveDesignerNodeState(node, expressionRuntime(item))
   }
   function readableRow(item: RuntimeRowAddress): DesignerRuntimeRow | undefined {
     if (!ownPolicy(item).visible) return undefined
@@ -2409,6 +2435,11 @@ function createSession(
       assertUsable()
       if (policy.mode) mode = policy.mode
       if (Object.hasOwn(policy, 'fieldRuntimePolicy')) globalFields = policy.fieldRuntimePolicy
+      if (Object.hasOwn(policy, 'fieldRuntimePolicyFallback')) {
+        fieldAccessFallback = isDesignerFieldAccessFallback(policy.fieldRuntimePolicyFallback)
+          ? policy.fieldRuntimePolicyFallback
+          : 'HIDDEN'
+      }
       if (Object.hasOwn(policy, 'relationRuntimePolicy'))
         policyResolver = policy.relationRuntimePolicy
       for (const draft of drafts.values()) draft.session.updateRuntimePolicy(policy)
@@ -2421,6 +2452,7 @@ function createSession(
       return item ? readableRow(item) : undefined
     },
     readFieldState,
+    readNodeState,
     readPolicy,
     scopeFor,
     readCollection(scope) {
@@ -2500,7 +2532,6 @@ function intersectFieldPolicy(
       : levels.includes('READ_ONLY')
         ? 'READ_ONLY'
         : 'EDITABLE',
-    required: left?.required === true || right?.required === true,
   }
 }
 
@@ -2519,4 +2550,24 @@ function intersectFieldMaps(
       ),
     ]),
   )
+}
+
+function indexFieldPlacements(document: {
+  uiSchema: { root: DesignerLayoutNode[]; overlays: Array<{ root: DesignerLayoutNode[] }> }
+}): Map<string, string[][]> {
+  const placements = new Map<string, string[][]>()
+  const visit = (nodes: DesignerLayoutNode[], ancestors: string[]): void => {
+    for (const node of nodes) {
+      if (node.nodeType === 'FIELD') {
+        const chains = placements.get(node.fieldId) ?? []
+        chains.push(ancestors)
+        placements.set(node.fieldId, chains)
+        continue
+      }
+      for (const slot of node.slots) visit(slot.children, [...ancestors, node.id])
+    }
+  }
+  visit(document.uiSchema.root, [])
+  for (const overlay of document.uiSchema.overlays) visit(overlay.root, [])
+  return placements
 }

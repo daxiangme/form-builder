@@ -6,6 +6,7 @@ import './style.css'
 
 /** 普通 Vue 宿主可直接从主包使用的文档创建、编解码、诊断与演示辅助门面。 */
 export {
+  createDefaultDesignerContainerBehavior,
   createDefaultDesignerFieldBehavior,
   createDemoDesignerDocument,
   createDesignerOverlayModule,
@@ -40,6 +41,7 @@ export type {
   DesignerValidationResult,
   FormDesignerCatalogs,
   FormDesignerHostCapabilities,
+  FormFieldAccessFallback,
   FormFieldAccessLevel,
   FormFieldRuntimePolicy,
   FormFieldRuntimePolicyMap,
@@ -74,6 +76,7 @@ export type {
   DesignerEventFlow,
   DesignerOverlayModule,
   DesignerResolvedFieldState,
+  DesignerResolvedNodeState,
   DesignerRelation,
   DesignerManyToManyRelation,
   DesignerOneToManyRelation,

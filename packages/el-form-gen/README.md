@@ -135,17 +135,45 @@ function handleSubmit(projection: DesignerSubmissionProjection) {
 
 ## 三态字段权限
 
-运行策略以字段 ID 为键。未传 `fieldRuntimePolicy` 时按独立表单 Schema 工作；传入后视为完整权威投影，缺失或非法字段（含历史 `REQUIRED`）按 `HIDDEN` 失败关闭。
+运行策略以字段 ID 为键。设计文档不保存权限；`ElFormDesigner` 与 `ElFormRenderer` 分离，流程节点把 `{ accessLevel: 'EDITABLE' | 'READ_ONLY' | 'HIDDEN' }` 作为第二份输入传给运行组件。
 
-- `HIDDEN`：不渲染、不校验、不提交。
-- `READ_ONLY`：只展示，拒绝输入、附件、子表和事件流写入，也不进入用户提交。
-- `EDITABLE`：正常校验和提交；`required: true` 仅作为独立必填标志。
+未传 `fieldRuntimePolicy` 时按独立表单 Schema 工作，全部字段默认可编辑，再由设计时的隐藏、只读、必填和条件规则收紧。
 
-公式可以刷新只读展示，但不能放宽宿主权限。旧 BPM `REQUIRED` 必须由宿主映射为 `{ accessLevel: 'EDITABLE', required: true }`。
+一旦传入策略对象（包括 `{}`）：
+
+- 键缺失走 `fieldRuntimePolicyFallback`，默认 `HIDDEN`。宿主只传关心的字段时须显式设为 `EDITABLE`。
+- 非法 `accessLevel`（含历史 `REQUIRED`）仍按 `HIDDEN` 失败关闭，不会被 fallback 放宽。
+- 权限只能收紧：设计时隐藏或只读的字段，运行时传入 `EDITABLE` 无效。
+
+| 访问级别    | 渲染   | 校验               | 用户提交   | 输入 / 附件 / 子表 / 事件写入 |
+| ----------- | ------ | ------------------ | ---------- | ----------------------------- |
+| `HIDDEN`    | 不渲染 | 不校验             | 不提交     | 拒绝                          |
+| `READ_ONLY` | 只展示 | 不校验             | 不提交     | 拒绝                          |
+| `EDITABLE`  | 正常   | 设计文档必填与规则 | 按提交策略 | 允许                          |
+
+必填只来自表单设计。隐藏或只读字段自动不必填。旧 BPM 节点权限 `REQUIRED` 映射为 `EDITABLE`，必填须在设计文档里配置。
+
+公式可以刷新只读展示，但不能放宽宿主权限。
+
+```ts
+const fieldRuntimePolicy: FormFieldRuntimePolicyMap = {
+  [titleFieldId]: { accessLevel: 'EDITABLE' },
+  [amountFieldId]: { accessLevel: 'READ_ONLY' },
+  [secretFieldId]: { accessLevel: 'HIDDEN' },
+}
+
+<ElFormRenderer
+  :document="document"
+  :field-runtime-policy="fieldRuntimePolicy"
+  field-runtime-policy-fallback="EDITABLE"
+/>
+```
+
+流程审批切换节点时调用 `session.updateRuntimePolicy({ fieldRuntimePolicy })`，不要重建会话。
 
 ## 模块、规则与事件
 
-主表单、弹窗与抽屉共用同一份设计文档。新关系文档使用 `documentVersion: '2.0'`，旧 `1.0` 文档可通过 `migrateDesignerDocument` 保留原 ID 迁移。字段高级配置集中管理状态条件、公式与联动、验证规则、提交策略和组件事件；事件使用可视化步骤与条件分支表达。
+主表单、弹窗与抽屉共用同一份设计文档。新关系文档使用 `documentVersion: '2.0'`，旧 `1.0` 文档可通过 `migrateDesignerDocument` 保留原 ID 迁移。字段高级配置集中管理状态条件、公式与联动、验证规则、提交策略和组件事件；分组、标签页和子表等容器可配置条件显隐。隐藏容器内的字段自动视为不可见，因此不校验、不提交。单个标签页的显隐尚未支持。事件使用可视化步骤与条件分支表达。
 
 ![弹窗与抽屉模块设计](https://raw.githubusercontent.com/daxiangme/form-builder/v0.1.1/docs/assets/screenshots/overlay-module-designer.png)
 
@@ -183,7 +211,7 @@ import {
 
 ## 后续 DX BPM 接入
 
-本轮不修改 DX BPM。后续请：把依赖换成 `el-form-gen`；把权限键从字段路径映射到字段 ID；把旧 `REQUIRED` 写成 `{ accessLevel: 'EDITABLE', required: true }`。
+本轮不修改 DX BPM。后续请：把依赖换成 `el-form-gen`；把权限键从字段路径映射到字段 ID；把旧 `REQUIRED` 写成 `{ accessLevel: 'EDITABLE' }`，必填在表单设计里配置。
 
 ## 高级扩展与内部架构
 

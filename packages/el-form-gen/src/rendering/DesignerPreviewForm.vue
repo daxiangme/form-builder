@@ -1,6 +1,6 @@
 <template>
   <div v-if="inputError" class="daxiang-form">
-    <ElAlert type="error" :closable="false" :title="inputError" />
+    <ElEmpty :description="inputError" />
   </div>
   <DesignerSessionForm
     v-else-if="session"
@@ -68,6 +68,7 @@ const inputError = computed(() => {
       props.modelValue !== undefined ||
       props.mode !== undefined ||
       props.fieldRuntimePolicy !== undefined ||
+      props.fieldRuntimePolicyFallback !== undefined ||
       props.adapters !== undefined ||
       props.adapterContext !== undefined ||
       props.initialOverlayCode !== undefined

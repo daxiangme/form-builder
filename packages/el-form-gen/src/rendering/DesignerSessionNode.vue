@@ -1,5 +1,5 @@
 <template>
-  <ElCol v-if="relationNode" :span="grid.span" :offset="grid.offset">
+  <ElCol v-if="relationNode && nodeVisible" :span="grid.span" :offset="grid.offset">
     <section
       v-if="collectionPolicy.visible"
       class="daxiang-form-relation"
@@ -23,10 +23,14 @@
           >
         </div>
       </header>
-      <ElAlert v-if="collection?.error" :title="collection.error" type="error" :closable="false" />
       <p v-if="collection?.loadState === 'LOADING'" class="daxiang-form-relation__status">
         正在加载…
       </p>
+      <ElEmpty
+        v-else-if="!collection?.rows.length && collection?.loadState === 'FAILED'"
+        description="关系数据加载失败"
+        :image-size="48"
+      />
       <ElEmpty
         v-else-if="collection?.loadState === 'COMPLETE' && !collection.rows.length"
         description="暂无记录"
@@ -133,13 +137,7 @@
           ></template
         >
       </ElInput>
-      <ElAlert
-        v-if="pickerError"
-        :title="pickerError"
-        type="error"
-        :closable="false"
-        class="daxiang-form-relation__picker-error"
-      />
+      <p v-if="pickerError" class="daxiang-form-relation__picker-error">{{ pickerError }}</p>
       <ElCheckboxGroup v-model="selectedKeys" class="daxiang-form-relation__candidates">
         <ElCheckbox
           v-for="candidate in candidates"
@@ -173,7 +171,7 @@
       </template>
     </ElDialog>
   </ElCol>
-  <ElCol v-else-if="layoutContainer" :span="grid.span" :offset="grid.offset">
+  <ElCol v-else-if="layoutContainer && nodeVisible" :span="grid.span" :offset="grid.offset">
     <section
       class="daxiang-form-session-container"
       :class="containerClasses"
@@ -222,7 +220,7 @@
     </section>
   </ElCol>
   <DesignerRuntimeNode
-    v-else
+    v-else-if="nodeVisible"
     :node="node"
     :fields="fields"
     :value-store="projectedValue"
@@ -231,6 +229,7 @@
     :gutter="document.appearance.gridGutter"
     :appearance="document.appearance"
     :field-states="fieldStates"
+    :node-states="nodeStates"
     :field-feedbacks="fieldFeedbacks"
     :feedback-scope="rowKey"
     :adapters="session.adapters"
@@ -257,6 +256,7 @@ import type {
   DesignerDevice,
   DesignerLayoutNode,
   DesignerRelationCandidate,
+  DesignerResolvedNodeState,
   DesignerRuntimeCommand,
   DesignerRuntimeRow,
   DesignerRuntimeSession,
@@ -337,6 +337,13 @@ const fieldStates = computed(() => {
     fields.value.map((field) => [field.id, props.session.readFieldState(props.rowKey, field.id)]),
   )
 })
+const nodeVisible = computed(() => {
+  void props.snapshot.revision
+  return props.session.readNodeState(props.rowKey, props.node.id).visible
+})
+const nodeStates = computed<Record<string, DesignerResolvedNodeState>>(() => ({
+  [props.node.id]: { visible: nodeVisible.value },
+}))
 const fieldFeedbacks = computed(() =>
   Object.fromEntries(
     fields.value.map((field) => [
@@ -646,6 +653,8 @@ onBeforeUnmount(() => {
 
 .daxiang-form .daxiang-form-relation__picker-error {
   margin-top: 12px;
+  color: var(--el-color-danger);
+  font-size: 13px;
 }
 
 .daxiang-form-session-container {

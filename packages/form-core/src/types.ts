@@ -36,15 +36,20 @@ export type DesignerRuntimeMode = 'DESIGN' | 'CREATE' | 'EDIT' | 'READ_ONLY' | '
 /** 设计文档字段的稳定身份。 */
 export type DesignerFieldId = string
 
-/** 服务端下发的字段访问级别；必填不再编码为访问级别。 */
+/** 服务端下发的字段访问级别；必填由设计文档控制，不再编码为访问级别。 */
 export type FormFieldAccessLevel = 'HIDDEN' | 'READ_ONLY' | 'EDITABLE'
 
-/** 单个字段的运行策略：访问级别与独立必填标志。 */
+/**
+ * 传入字段权限映射后，未列出字段的缺省访问级别。
+ *
+ * 默认 `HIDDEN`：漏传字段不会意外放宽权限。宿主只传关心的字段时须显式设为 `EDITABLE`。
+ */
+export type FormFieldAccessFallback = 'HIDDEN' | 'EDITABLE'
+
+/** 单个字段的运行策略；权限只有可编辑、只读、隐藏三个值。 */
 export interface FormFieldRuntimePolicy {
   /** 三态访问级别。 */
   accessLevel: FormFieldAccessLevel
-  /** 仅 EDITABLE 时生效的独立必填标志；不是第四种访问级别。 */
-  required?: boolean
 }
 
 /** 以字段 ID 为键的完整运行策略投影。 */
@@ -143,6 +148,20 @@ export interface DesignerFieldStateRule {
   condition: DesignerExpression
   valueWhenTrue: boolean
   valueWhenFalse?: boolean
+}
+
+/** 容器条件显隐规则；容器只有显示状态，必填与禁用仍属于字段。 */
+export interface DesignerContainerStateRule {
+  id: string
+  target: 'VISIBLE'
+  condition: DesignerExpression
+  valueWhenTrue: boolean
+  valueWhenFalse?: boolean
+}
+
+/** 容器高级行为；当前只承载条件显隐。 */
+export interface DesignerContainerBehavior {
+  stateRules: DesignerContainerStateRule[]
 }
 
 /** 联动规则覆盖已有目标值时采用的受控策略。 */
@@ -388,6 +407,8 @@ export interface DesignerContainerNode {
   configuration: Record<string, unknown>
   layout: DesignerResponsiveGrid
   slots: DesignerLayoutSlot[]
+  /** 容器条件显隐；解码时补齐默认空规则。 */
+  behavior?: DesignerContainerBehavior
   /** 容器或辅助组件仅保存注册表允许的事件绑定。 */
   eventBindings?: Partial<Record<DesignerComponentEvent, string>>
 }
@@ -788,6 +809,11 @@ export interface DesignerResolvedFieldState {
   disabled: boolean
   /** 宿主访问级别；未传运行策略时为空，提交投影据此区分宿主只读与文档只读。 */
   accessLevel?: FormFieldAccessLevel
+}
+
+/** 布局节点条件解析结果。 */
+export interface DesignerResolvedNodeState {
+  visible: boolean
 }
 
 /** 单条运行验证结果。 */

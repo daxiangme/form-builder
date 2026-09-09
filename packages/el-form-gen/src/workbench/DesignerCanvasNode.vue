@@ -68,7 +68,11 @@
       </button>
       <DxSvgIcon :icon="registration?.icon ?? 'ri:error-warning-line'" />
       <strong>{{ textConfiguration('title') || componentName }}</strong>
-      <small v-if="registration?.acceptsChildren">{{ childCount }} 项</small>
+      <small v-if="registration?.acceptsChildren || hasVisibilityRules">
+        <template v-if="registration?.acceptsChildren">{{ childCount }} 项</template>
+        <template v-if="registration?.acceptsChildren && hasVisibilityRules"> · </template>
+        <template v-if="hasVisibilityRules">条件显示</template>
+      </small>
       <span />
       <button type="button" aria-label="复制组件" @click.stop="emit('duplicate', node.id)">
         <DxSvgIcon icon="ri:file-copy-line" />
@@ -491,6 +495,9 @@ const childCount = computed(() =>
   props.node.nodeType === 'CONTAINER'
     ? props.node.slots.reduce((count, slot) => count + slot.children.length, 0)
     : 0,
+)
+const hasVisibilityRules = computed(
+  () => props.node.nodeType === 'CONTAINER' && (props.node.behavior?.stateRules.length ?? 0) > 0,
 )
 const containerAppearanceClasses = computed(() =>
   props.node.nodeType === 'CONTAINER'

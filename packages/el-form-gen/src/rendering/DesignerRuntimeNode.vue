@@ -40,7 +40,9 @@
 
   <ElCol
     v-else-if="
-      node.nodeType === 'CONTAINER' && !(mode === 'DETAIL' && node.componentType === 'button')
+      node.nodeType === 'CONTAINER' &&
+      runtimeNodeVisible &&
+      !(mode === 'DETAIL' && node.componentType === 'button')
     "
     :span="grid.span"
     :offset="grid.offset"
@@ -103,14 +105,10 @@
             : '当前宿主未提供验证码 Adapter，挑战已失败关闭'
         }}</small>
       </div>
-      <ElAlert
-        v-else-if="node.componentType === 'iframe'"
-        type="info"
-        :closable="false"
-        show-icon
-        :title="textConfiguration('title') || '外部页面'"
-        description="静态 Core 不加载任意外部 URL"
-      />
+      <div v-else-if="node.componentType === 'iframe'" class="designer-runtime-node__unavailable">
+        <strong>{{ textConfiguration('title') || '外部页面' }}</strong>
+        <small class="designer-runtime-node__help">静态 Core 不加载任意外部 URL</small>
+      </div>
       <ElTabs
         v-else-if="node.componentType === 'tabs'"
         v-model="activeSlot"
@@ -136,6 +134,7 @@
               :gutter="gutter"
               :appearance="appearance"
               :field-states="fieldStates"
+              :node-states="nodeStates"
               :field-feedbacks="fieldFeedbacks"
               :feedback-scope="feedbackScope"
               :adapters="adapters"
@@ -290,6 +289,7 @@
             :gutter="gutter"
             :appearance="appearance"
             :field-states="fieldStates"
+            :node-states="nodeStates"
             :field-feedbacks="fieldFeedbacks"
             :feedback-scope="feedbackScope"
             :adapters="adapters"
@@ -330,6 +330,7 @@ import type {
   DesignerFieldFeedback,
   DesignerLayoutNode,
   DesignerResolvedFieldState,
+  DesignerResolvedNodeState,
   DesignerRuntimeMode,
   DesignerRuntimeAdapters,
   DesignerRuntimeValueStore,
@@ -353,6 +354,7 @@ const props = defineProps<{
   gutter: number
   appearance: DesignerAppearance
   fieldStates: Record<string, DesignerResolvedFieldState>
+  nodeStates?: Record<string, DesignerResolvedNodeState>
   fieldFeedbacks: Record<string, DesignerFieldFeedback>
   feedbackScope: string
   adapters?: DesignerRuntimeAdapters
@@ -420,6 +422,9 @@ const runtimeFieldState = computed<DesignerResolvedFieldState>(() =>
         disabled: field.value.display.readonly,
       })
     : { visible: false, required: false, disabled: false },
+)
+const runtimeNodeVisible = computed(
+  () => props.node.nodeType !== 'CONTAINER' || props.nodeStates?.[props.node.id]?.visible !== false,
 )
 const runtimeField = computed<DesignerField>(() => ({
   ...runtimeVisibleField.value!,
@@ -652,6 +657,11 @@ function cloneValue(value: unknown): unknown {
 </script>
 
 <style scoped>
+.designer-runtime-node__unavailable {
+  display: grid;
+  gap: var(--daxiang-form-space-1);
+}
+
 .designer-runtime-node__help {
   display: block;
   width: 100%;

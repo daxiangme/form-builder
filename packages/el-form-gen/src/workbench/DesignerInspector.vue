@@ -160,6 +160,24 @@
             </ElCollapseItem>
 
             <ElCollapseItem
+              v-if="selectedContainer"
+              id="designer-inspector-section-display-conditions"
+              title="显示条件"
+              name="display-conditions"
+            >
+              <div class="designer-inspector__advanced-actions">
+                <div>
+                  <span>条件显示 / 隐藏</span>
+                  <small
+                    >{{ selectedContainer.behavior?.stateRules.length ?? 0 }} 条规则 ·
+                    隐藏后内部字段不校验</small
+                  >
+                  <ElButton plain @click="emit('open-container-conditions')">配置</ElButton>
+                </div>
+              </div>
+            </ElCollapseItem>
+
+            <ElCollapseItem
               v-if="selectedRelation"
               id="designer-inspector-section-relation"
               title="主子关系"
@@ -780,6 +798,7 @@ const emit = defineEmits<{
   'update-action-bar': [patch: Partial<DesignerDocument['actionBar']>]
   'update-module': [moduleCode: string, patch: Partial<DesignerOverlayModule>]
   'open-field-advanced': []
+  'open-container-conditions': []
   'open-event-editor': []
   'open-global-advanced': []
   'open-schema': []
@@ -795,7 +814,14 @@ const activeTabModel = computed({
   },
 })
 const componentScrollRef = ref<HTMLElement>()
-const openedSections = ref(['identity', 'field-basic', 'relation', 'configuration-BASIC', 'layout'])
+const openedSections = ref([
+  'identity',
+  'field-basic',
+  'relation',
+  'configuration-BASIC',
+  'layout',
+  'display-conditions',
+])
 const activeSection = ref('identity')
 const applyAppearanceVisible = ref(false)
 const applyAppearanceDimensions = ref<DesignerContainerAppearanceDimension[]>(['STYLE', 'RADIUS'])
@@ -909,6 +935,9 @@ const registration = computed<DesignerComponentRegistration | undefined>(() => {
     return findDesignerComponent(props.selectedNode.componentType)
   return undefined
 })
+const selectedContainer = computed(() =>
+  props.selectedNode?.nodeType === 'CONTAINER' ? props.selectedNode : undefined,
+)
 const compatibleComponents = computed(() =>
   props.selectedField ? compatibleDesignerComponents(props.selectedField.semanticType) : [],
 )
@@ -1009,8 +1038,15 @@ const inspectorNavigation = computed(() => {
       { name: 'field-basic', label: '基础与校验', icon: 'ri:equalizer-2-line' },
       { name: 'advanced', label: '高级能力', icon: 'ri:flashlight-line' },
     )
-  } else if (registration.value?.supportedEvents?.length) {
-    items.push({ name: 'advanced', label: '事件能力', icon: 'ri:flashlight-line' })
+  } else if (selectedContainer.value) {
+    if (registration.value?.supportedEvents?.length) {
+      items.push({ name: 'advanced', label: '事件能力', icon: 'ri:flashlight-line' })
+    }
+    items.push({
+      name: 'display-conditions',
+      label: '显示条件',
+      icon: 'ri:eye-off-line',
+    })
   }
   if (selectedRelation.value) {
     items.push({ name: 'relation', label: '主子关系', icon: 'ri:git-branch-line' })

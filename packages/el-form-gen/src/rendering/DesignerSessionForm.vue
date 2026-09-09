@@ -4,12 +4,22 @@
     :class="[{ 'is-mobile': device === 'mobile', 'is-embedded': embedded }, controlRadius.class]"
     :style="controlRadius.style"
   >
-    <header v-if="showToolbar && !embedded" class="daxiang-form-session__toolbar">
+    <header v-if="showToolbarChrome" class="daxiang-form-session__toolbar">
       <div>
         <strong>{{ session.document.name }}</strong>
         <ElTag
           :type="snapshot.status === 'UNKNOWN' ? 'warning' : snapshot.dirty ? 'info' : 'success'"
           >{{ statusText }}</ElTag
+        >
+        <ElButton
+          v-if="snapshot.status === 'UNKNOWN'"
+          size="small"
+          :loading="resolving"
+          @click="resolveSubmission"
+          >核对</ElButton
+        >
+        <ElButton v-if="persistentIssues.length" size="small" @click="issuesDialogOpen = true"
+          >查看问题</ElButton
         >
       </div>
       <ElSegmented
@@ -20,28 +30,6 @@
         @update:model-value="changeMode"
       />
     </header>
-    <ElAlert v-if="notice" :title="notice" type="warning" show-icon closable @close="notice = ''" />
-    <ElAlert
-      v-if="snapshot.status === 'UNKNOWN'"
-      title="保存结果尚未确认，请核对原提交结果"
-      type="warning"
-      :closable="false"
-    >
-      <ElButton :loading="resolving" @click="resolveSubmission">核对保存结果</ElButton>
-    </ElAlert>
-    <div v-if="snapshot.issues.length" class="daxiang-form-session__issues" role="alert">
-      <p v-for="(issue, index) in snapshot.issues" :key="`${issue.code}-${index}`">
-        {{ issue.message }}
-        <ElButton
-          v-if="issue.rowKey && issue.fieldId"
-          size="small"
-          text
-          :disabled="locked"
-          @click="revertField(issue.rowKey, issue.fieldId)"
-          >还原该字段</ElButton
-        >
-      </p>
-    </div>
     <template v-if="!overlayOnly">
       <div v-if="showActions('TOP')" class="daxiang-form-session__actions">
         <ElButton
@@ -74,15 +62,9 @@
         </ElRow>
         <ElEmpty v-if="!renderedNodes.length" description="当前表单没有内容" />
       </ElForm>
-      <div
-        v-if="
-          showActions('BOTTOM') ||
-          (showToolbar && !session.document.actionBar.visible && !embedded && writableMode)
-        "
-        class="daxiang-form-session__actions"
-      >
+      <div v-if="showBottomActions" class="daxiang-form-session__actions">
         <ElButton
-          v-if="!session.document.actionBar.visible"
+          v-if="!session.document.actionBar.visible && writableMode"
           type="primary"
           :disabled="locked"
           @click="submit"
@@ -96,6 +78,14 @@
           @click="runAction(button.action)"
           >{{ button.label }}</ElButton
         >
+        <ElButton
+          v-if="showResidualResolve"
+          type="primary"
+          :loading="resolving"
+          @click="resolveSubmission"
+          >核对保存结果</ElButton
+        >
+        <ElButton v-if="showResidualIssues" @click="issuesDialogOpen = true">查看问题</ElButton>
       </div>
     </template>
     <component
@@ -133,12 +123,32 @@
         >
       </template>
     </component>
+    <FormModalShell
+      v-model="issuesDialogOpen"
+      title="查看问题"
+      :show-confirm="false"
+      cancel-text="关闭"
+    >
+      <div class="daxiang-form-session__issue-list">
+        <p v-for="(issue, index) in persistentIssues" :key="`${issue.code}-${index}`">
+          <span>{{ issue.message }}</span>
+          <ElButton
+            v-if="issue.rowKey && issue.fieldId"
+            size="small"
+            text
+            :disabled="locked"
+            @click="revertField(issue.rowKey, issue.fieldId)"
+            >还原该字段</ElButton
+          >
+        </p>
+      </div>
+    </FormModalShell>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, provide, ref, shallowRef, watch } from 'vue'
-import { ElDrawer } from 'element-plus'
+import { ElDrawer, ElMessage, ElMessageBox } from 'element-plus'
 import { resolveDesignerOverlayMaxHeight } from '@daxiangme/form-core'
 import type {
   DesignerActionBarButton,
@@ -188,9 +198,12 @@ const emit = defineEmits<{
   action: [action: DesignerActionBarButton['action']]
 }>()
 const snapshot = shallowRef(props.session.getSnapshot())
-const notice = ref('')
 const resolving = ref(false)
 const draftBusy = ref(false)
+const issuesDialogOpen = ref(false)
+const promptedUnknownKey = ref('')
+const toastedMessages = new Set<string>()
+const toastedIssueKeys = new Set<string>()
 let unsubscribe: (() => void) | undefined
 const emittedBatches = new Set<string>()
 watch(
@@ -198,15 +211,13 @@ watch(
   (session) => {
     unsubscribe?.()
     snapshot.value = session.getSnapshot()
-    notice.value = ''
+    promptedUnknownKey.value = ''
+    toastedMessages.clear()
+    toastedIssueKeys.clear()
+    issuesDialogOpen.value = false
     if (snapshot.value.pendingSubmission)
       emittedBatches.add(snapshot.value.pendingSubmission.submissionId)
     unsubscribe = session.subscribe((next: DesignerRuntimeSnapshot) => {
-      if (
-        next.baselineRevision !== snapshot.value.baselineRevision ||
-        (!next.dirty && !next.issues.length)
-      )
-        notice.value = ''
       snapshot.value = next
       const batch = next.pendingSubmission
       if (next.status === 'SUBMITTING' && batch && !emittedBatches.has(batch.submissionId)) {
@@ -261,9 +272,41 @@ function changeMode(value: string | number | boolean) {
   if (value === 'CREATE' || value === 'EDIT' || value === 'READ_ONLY' || value === 'DETAIL')
     props.session.updateRuntimePolicy({ mode: value })
 }
+const showToolbarChrome = computed(() => props.showToolbar && !props.embedded)
+const persistentIssues = computed(() =>
+  snapshot.value.issues.filter(
+    (issue) => issue.code !== 'VALIDATION_FAILED' && issue.code !== 'SUBMISSION_UNKNOWN',
+  ),
+)
+const showResidualResolve = computed(
+  () => !showToolbarChrome.value && snapshot.value.status === 'UNKNOWN',
+)
+const showResidualIssues = computed(
+  () => !showToolbarChrome.value && persistentIssues.value.length > 0,
+)
+const showBottomActions = computed(
+  () =>
+    showActions('BOTTOM') ||
+    (showToolbarChrome.value &&
+      !props.session.document.actionBar.visible &&
+      !props.embedded &&
+      writableMode.value) ||
+    showResidualResolve.value ||
+    showResidualIssues.value,
+)
+function issueKey(issue: { code: string; message: string; rowKey?: string; fieldId?: string }) {
+  return `${issue.code}:${issue.rowKey ?? ''}:${issue.fieldId ?? ''}:${issue.message}`
+}
 function warn(message: string) {
-  notice.value = message
+  if (message && !toastedMessages.has(message)) {
+    toastedMessages.add(message)
+    ElMessage.warning(message)
+  }
   emit('runtime-warning', message)
+}
+function toastSnapshotIssue() {
+  const issue = snapshot.value.issues[0]
+  if (issue) warn(issue.message)
 }
 
 async function revertField(rowKey: string, fieldId: string) {
@@ -279,6 +322,19 @@ function showActions(position: 'TOP' | 'BOTTOM') {
     (bar.position === position || bar.position === 'BOTH')
   )
 }
+async function promptUnknownResolution() {
+  try {
+    await ElMessageBox.confirm('保存结果尚未确认，请核对原提交结果', '结果待核对', {
+      type: 'warning',
+      confirmButtonText: '核对保存结果',
+      cancelButtonText: '取消',
+      closeOnClickModal: false,
+    })
+    await resolveSubmission()
+  } catch {
+    /* 用户取消后仍可从工具栏或动作栏再次核对 */
+  }
+}
 async function submit() {
   try {
     if (props.legacy) {
@@ -286,8 +342,11 @@ async function submit() {
       if (projection) {
         emit('legacy-submit', projection)
         await props.session.dispatch({ type: 'FORM_EVENT', event: 'AFTER_SUBMIT' })
-      }
-    } else await props.session.prepareSubmission()
+      } else toastSnapshotIssue()
+    } else {
+      const batch = await props.session.prepareSubmission()
+      if (!batch) toastSnapshotIssue()
+    }
   } catch {
     warn('提交准备失败，请检查表单诊断')
   }
@@ -313,6 +372,38 @@ async function resolveSubmission() {
     resolving.value = false
   }
 }
+watch(
+  () => {
+    if (props.embedded || snapshot.value.status !== 'UNKNOWN') return ''
+    return snapshot.value.pendingSubmission?.submissionId || snapshot.value.sessionId
+  },
+  (key) => {
+    if (!key || promptedUnknownKey.value === key) return
+    promptedUnknownKey.value = key
+    void promptUnknownResolution()
+  },
+  { immediate: true },
+)
+watch(
+  persistentIssues,
+  (issues) => {
+    if (!issues.length) {
+      toastedIssueKeys.clear()
+      toastedMessages.clear()
+      issuesDialogOpen.value = false
+      return
+    }
+    const current = new Set(issues.map((issue) => issueKey(issue)))
+    for (const key of [...toastedIssueKeys]) if (!current.has(key)) toastedIssueKeys.delete(key)
+    for (const issue of issues) {
+      const key = issueKey(issue)
+      if (toastedIssueKeys.has(key)) continue
+      toastedIssueKeys.add(key)
+      if (issue.message && !toastedMessages.has(issue.message)) warn(issue.message)
+    }
+  },
+  { immediate: true },
+)
 const draftSession = computed(() =>
   snapshot.value.activeDraft
     ? props.session.getDraft(snapshot.value.activeDraft.draftId)
@@ -437,15 +528,11 @@ watch(
   margin-block: 16px;
 }
 
-.daxiang-form .daxiang-form-session__issues {
-  padding: 8px 12px;
-  margin-block: 12px;
-  color: var(--el-color-danger);
-  border: 1px solid var(--el-color-danger-light-7);
-  border-radius: var(--el-border-radius-base);
-}
-
-.daxiang-form .daxiang-form-session__issues p {
-  margin-block: 4px;
+.daxiang-form-session__issue-list p {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-block: 8px;
 }
 </style>

@@ -140,32 +140,35 @@ function handleSubmit(projection: DesignerSubmissionProjection) {
 
 ## 三态字段权限
 
-运行策略以字段 **ID** 为键，而不是 `fieldPath` 或字段编码。
+运行策略以字段 **ID** 为键，而不是 `fieldPath` 或字段编码。设计文档不保存权限；设计器与运行渲染器分离，流程节点把三态访问级别作为第二份输入传给运行组件。
 
-未传 `fieldRuntimePolicy` 时，渲染器按独立表单 Schema 工作：文档必填、条件规则、公式只读和运行模式继续生效。
+未传 `fieldRuntimePolicy` 时，渲染器按独立表单 Schema 工作：文档必填、条件规则、公式只读和运行模式继续生效，字段默认可编辑。
 
-一旦传入策略对象（包括 `{}`），该映射视为完整权威投影：
+一旦传入策略对象（包括 `{}`）：
 
-- 缺失字段、非法 `accessLevel`（含历史 `REQUIRED`）按 `HIDDEN` 失败关闭。
-- 包内**不会**把旧 `REQUIRED` 自动映射为可编辑。
+- 键缺失走 `fieldRuntimePolicyFallback`，默认 `HIDDEN`。宿主只传节点上做过特殊控制的字段时须显式设为 `EDITABLE`。
+- 非法 `accessLevel`（含历史 `REQUIRED`）仍按 `HIDDEN` 失败关闭，不会被 fallback 放宽。
+- 权限只能收紧：设计时隐藏或只读的字段，运行时传入 `EDITABLE` 无效。
 
-| 访问级别    | 渲染   | 校验                     | 用户提交   | 输入 / 附件 / 子表 / 事件写入 |
-| ----------- | ------ | ------------------------ | ---------- | ----------------------------- |
-| `HIDDEN`    | 不渲染 | 不校验                   | 不提交     | 拒绝                          |
-| `READ_ONLY` | 只展示 | 不校验                   | 不提交     | 拒绝                          |
-| `EDITABLE`  | 正常   | Schema + 宿主 `required` | 按提交策略 | 允许                          |
+| 访问级别    | 渲染   | 校验               | 用户提交   | 输入 / 附件 / 子表 / 事件写入 |
+| ----------- | ------ | ------------------ | ---------- | ----------------------------- |
+| `HIDDEN`    | 不渲染 | 不校验             | 不提交     | 拒绝                          |
+| `READ_ONLY` | 只展示 | 不校验             | 不提交     | 拒绝                          |
+| `EDITABLE`  | 正常   | 设计文档必填与规则 | 按提交策略 | 允许                          |
 
-`required` 是独立校验标志，不再编码为第四种访问级别。仅当 `accessLevel` 为 `EDITABLE` 且运行模式为 `CREATE` / `EDIT` 时，`required: true` 会强制必填。文档里的条件规则 `target: 'REQUIRED'` 仍然属于 Schema，不是宿主权限。
+必填只来自表单设计。隐藏或只读字段自动不必填。文档里的条件规则 `target: 'REQUIRED'` 仍然属于 Schema，不是宿主权限。旧 BPM 节点权限 `REQUIRED` 映射为 `EDITABLE`，若旧流程靠节点级必填实现「仅该节点必填」，迁移后这个差异会丢失。
 
 公式（`FORMULA`）可以刷新只读字段的展示值，但不能放宽宿主权限。联动（`LINKAGE`）和事件流写入必须遵守 `HIDDEN` / `READ_ONLY`。文档 `display.readonly` 仍可进入提交；宿主 `READ_ONLY` 不会进入用户提交。
 
 ```ts
 const fieldRuntimePolicy: FormFieldRuntimePolicyMap = {
-  [titleFieldId]: { accessLevel: 'EDITABLE', required: true },
+  [titleFieldId]: { accessLevel: 'EDITABLE' },
   [amountFieldId]: { accessLevel: 'READ_ONLY' },
   [secretFieldId]: { accessLevel: 'HIDDEN' },
 }
 ```
+
+切换审批节点时调用 `session.updateRuntimePolicy({ fieldRuntimePolicy })`，不要重建会话。
 
 ## 模块化表单
 
@@ -175,7 +178,7 @@ const fieldRuntimePolicy: FormFieldRuntimePolicyMap = {
 
 ## 字段规则与事件流
 
-字段高级配置集中管理状态条件、公式与联动、验证规则、提交策略和组件事件。规则在保存前经过诊断，事件使用可视化步骤与条件分支表达，不在 Schema 中保存自由 JavaScript。
+字段高级配置集中管理状态条件、公式与联动、验证规则、提交策略和组件事件。分组、标签页和子表等容器可配置条件显隐；隐藏容器内的字段自动视为不可见，因此不校验、不提交。单个标签页的显隐尚未支持。规则在保存前经过诊断，事件使用可视化步骤与条件分支表达，不在 Schema 中保存自由 JavaScript。
 
 ![字段高级配置](https://raw.githubusercontent.com/daxiangme/form-builder/v0.1.1/docs/assets/screenshots/advanced-field-config.png)
 
@@ -241,7 +244,7 @@ import {
 2. 样式改为 `import 'el-form-gen/style.css'`。
 3. 组件与插件改为 `ElFormDesigner`、`ElFormRenderer`、`ElFormGenPlugin`；无前缀别名已删除。
 4. 渲染器 prop `fieldAccess` 改为 `fieldRuntimePolicy`。
-5. 旧访问级别 `REQUIRED` 映射为 `{ accessLevel: 'EDITABLE', required: true }`。
+5. 旧访问级别 `REQUIRED` 映射为 `{ accessLevel: 'EDITABLE' }`，必填在表单设计里配置。
 
 ## 0.3 关系运行会话
 
@@ -255,7 +258,7 @@ import {
 
 1. 宿主依赖改为 `el-form-gen`，不再安装 `@daxiangme/form-vue`。
 2. 运行策略的键必须是表单字段 **ID**，不要用数据模型 `fieldPath`。需要先把 BPM 字段路径解析到 `DesignerField.id`。
-3. 历史节点权限 `REQUIRED` 转换为 `{ accessLevel: 'EDITABLE', required: true }`。`HIDDEN` 与 `READ_ONLY` 保持原语义。
+3. 历史节点权限 `REQUIRED` 转换为 `{ accessLevel: 'EDITABLE' }`，必填在表单设计里配置。`HIDDEN` 与 `READ_ONLY` 保持原语义。若旧流程靠节点级 `REQUIRED` 实现「仅该节点必填」，迁移后这个差异会丢失。
 4. 通过 `createDxBpmFormAdapter` 注入传输端口；Token、租户和 Axios 生命周期仍由宿主负责。
 
 ## 高级扩展与内部架构

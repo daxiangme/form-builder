@@ -4,9 +4,11 @@ import type {
   DesignerFieldFeedback,
   DesignerFormEvent,
   DesignerResolvedFieldState,
+  DesignerResolvedNodeState,
   DesignerRuntimeAdapters,
   DesignerRuntimeMode,
   DesignerSubmissionProjection,
+  FormFieldAccessFallback,
   FormFieldRuntimePolicyMap,
   FormRuntimeAdapterContext,
 } from './types'
@@ -416,6 +418,12 @@ export interface CreateDesignerRuntimeSessionOptions {
   mode?: Exclude<DesignerRuntimeMode, 'DESIGN'>
   /** 既有全局字段策略。 */
   fieldRuntimePolicy?: FormFieldRuntimePolicyMap
+  /**
+   * 传入字段策略后未列出字段的缺省访问级别。
+   *
+   * 默认 HIDDEN。宿主只传关心的字段时须显式设为 EDITABLE。
+   */
+  fieldRuntimePolicyFallback?: FormFieldAccessFallback
   /** 具体关系集合/行的宿主权威策略。 */
   relationRuntimePolicy?: FormRelationRuntimePolicyResolver
   /** 可选细粒度宿主能力。 */
@@ -448,12 +456,15 @@ export interface DesignerRuntimeSession {
   updateRuntimePolicy(policy: {
     mode?: Exclude<DesignerRuntimeMode, 'DESIGN'>
     fieldRuntimePolicy?: FormFieldRuntimePolicyMap
+    fieldRuntimePolicyFallback?: FormFieldAccessFallback
     relationRuntimePolicy?: FormRelationRuntimePolicyResolver
   }): void
   /** 返回权限过滤后的行视图，包含可见的共享目标字段。 */
   readRow(rowKey: string): DesignerRuntimeRow | undefined
   /** 当前行中的字段最终状态。 */
   readFieldState(rowKey: string, fieldId: string): DesignerResolvedFieldState
+  /** 当前行中布局节点的条件显示状态。 */
+  readNodeState(rowKey: string, nodeId: string): DesignerResolvedNodeState
   /** 读取具体集合/行的权限交集。 */
   readPolicy(scope: DesignerCollectionScope, rowKey?: string): FormRelationRuntimePolicy
   /** 按当前行获取子集合地址；由 Core 验证真实父链。 */

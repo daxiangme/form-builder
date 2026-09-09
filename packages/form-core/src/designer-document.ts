@@ -10,6 +10,7 @@ import {
   resolveDesignerTargetEntityCodes,
 } from './data-model'
 import {
+  createDefaultDesignerContainerBehavior,
   createDefaultDesignerFieldBehavior,
   DEFAULT_DESIGNER_ACTION_BAR,
   DEFAULT_DESIGNER_SUBMIT_POLICY,
@@ -862,6 +863,7 @@ function createContainerNode(
     configuration: { ...deepClone(registration.defaultConfiguration), ...configuration },
     layout: createResponsiveGrid(24, registration.defaultShowLabel),
     slots: createDefaultSlots(registration),
+    behavior: createDefaultDesignerContainerBehavior(),
   }
   synchronizeContainerSlots(node)
   return node
@@ -1156,6 +1158,7 @@ function diagnoseNodes(
         'configuration',
         'layout',
         'slots',
+        'behavior',
         'eventBindings',
       ],
       nodePath,

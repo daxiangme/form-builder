@@ -1,6 +1,8 @@
 import { findDesignerComponent } from './component-registry'
 import { diagnoseDesignerAdvancedDocument } from './document-advanced'
 import type {
+  DesignerContainerBehavior,
+  DesignerContainerStateRule,
   DesignerDiagnosticSeverity,
   DesignerDocument,
   DesignerEventActionType,
@@ -10,6 +12,7 @@ import type {
   DesignerFieldBehavior,
   DesignerFieldStateRule,
   DesignerFieldValueRule,
+  DesignerLayoutNode,
   DesignerLinkageOverwritePolicy,
   DesignerValidationConfigurationMap,
   DesignerValidationRule,
@@ -119,8 +122,22 @@ export function createDesignerStateRule(
   return {
     id: createBehaviorId('state'),
     target: 'VISIBLE',
-    condition: defaultCondition(document, field),
+    condition: defaultCondition(document, field.entityCode),
     valueWhenTrue: true,
+  }
+}
+
+/** 创建容器条件显隐规则；条件成立时显示。 */
+export function createDesignerContainerStateRule(
+  document: DesignerDocument,
+  entityCode: string,
+): DesignerContainerStateRule {
+  return {
+    id: createBehaviorId('state'),
+    target: 'VISIBLE',
+    condition: defaultCondition(document, entityCode),
+    valueWhenTrue: true,
+    valueWhenFalse: false,
   }
 }
 
@@ -166,6 +183,11 @@ export function createDesignerValidationRule(
 export function summarizeDesignerStateRule(rule: DesignerFieldStateRule): string {
   const target = { VISIBLE: '显示', REQUIRED: '必填', DISABLED: '禁用' }[rule.target]
   return `条件成立时${rule.valueWhenTrue ? '' : '不'}${target}`
+}
+
+/** 将容器显隐规则转换为列表摘要。 */
+export function summarizeDesignerContainerStateRule(rule: DesignerContainerStateRule): string {
+  return `条件成立时${rule.valueWhenTrue ? '' : '不'}显示`
 }
 
 /** 将公式或联动转换为列表摘要。 */
@@ -217,6 +239,102 @@ export function diagnoseDesignerFieldBehaviorDraft(input: {
   return deduplicateDiagnostics(result)
 }
 
+/**
+ * 使用容器行为草稿构造临时文档并返回节点级诊断。
+ */
+export function diagnoseDesignerContainerBehaviorDraft(input: {
+  document: DesignerDocument
+  nodeId: string
+  behavior: DesignerContainerBehavior
+}): DesignerFieldBehaviorDiagnostic[] {
+  const document = cloneValue(input.document)
+  const located = locateLayoutNode(document, input.nodeId)
+  if (!located || located.node.nodeType !== 'CONTAINER') {
+    return [
+      diagnostic('ERROR', 'CONTAINER_MISSING', '当前容器已不存在', '$.uiSchema.root', 'state'),
+    ]
+  }
+  located.node.behavior = cloneValue(input.behavior)
+  return deduplicateDiagnostics(
+    diagnoseDesignerAdvancedDocument(document)
+      .filter((item) => item.path.startsWith(`${located.path}.behavior`))
+      .map((item) => ({
+        ...item,
+        tab: 'state' as const,
+        ruleId: ruleIdFromPath(item.path, input.behavior),
+      })),
+  )
+}
+
+function locateLayoutNode(
+  document: DesignerDocument,
+  nodeId: string,
+): { node: DesignerLayoutNode; path: string } | undefined {
+  const visit = (
+    nodes: DesignerLayoutNode[],
+    path: string,
+  ): { node: DesignerLayoutNode; path: string } | undefined => {
+    for (const [index, node] of nodes.entries()) {
+      const nodePath = `${path}[${index}]`
+      if (node.id === nodeId) return { node, path: nodePath }
+      if (node.nodeType !== 'CONTAINER') continue
+      for (const [slotIndex, slot] of node.slots.entries()) {
+        const found = visit(slot.children, `${nodePath}.slots[${slotIndex}].children`)
+        if (found) return found
+      }
+    }
+    return undefined
+  }
+  return (
+    visit(document.uiSchema.root, '$.uiSchema.root') ??
+    document.uiSchema.overlays
+      .map((overlay, overlayIndex) =>
+        visit(overlay.root, `$.uiSchema.overlays[${overlayIndex}].root`),
+      )
+      .find(Boolean)
+  )
+}
+
+function ruleIdFromPath(path: string, behavior: DesignerContainerBehavior): string | undefined {
+  const match = path.match(/\.stateRules\[(\d+)]/)
+  if (!match) return undefined
+  return behavior.stateRules[Number(match[1])]?.id
+}
+
+/** 解析布局节点所属语义实体，供容器条件表达式选择当前行作用域。 */
+export function resolveDesignerLayoutNodeEntityCode(
+  document: DesignerDocument,
+  nodeId: string,
+): string {
+  const visit = (nodes: DesignerLayoutNode[], code: string): string | undefined => {
+    for (const node of nodes) {
+      if (node.id === nodeId) return code
+      if (node.nodeType !== 'CONTAINER') continue
+      const relation = document.dataSchema.relations.find(
+        (item) => item.code === node.configuration.relationCode,
+      )
+      for (const slot of node.slots) {
+        const found = visit(slot.children, relation?.childEntity.code ?? code)
+        if (found) return found
+      }
+    }
+    return undefined
+  }
+  return (
+    visit(document.uiSchema.root, document.dataSchema.rootEntity.code) ??
+    document.uiSchema.overlays
+      .map((overlay) =>
+        visit(
+          overlay.root,
+          document.dataSchema.entities.find((entity) => entity.id === overlay.contextEntityId)
+            ?.code ?? document.dataSchema.rootEntity.code,
+        ),
+      )
+      .find(Boolean) ??
+    document.dataSchema.rootEntity.code
+  )
+}
+
 /** 根据运行能力输出事件动作的可新增状态。 */
 export function resolveDesignerEventActionAvailability(
   type: DesignerEventActionType,
@@ -253,16 +371,18 @@ function createValidationConfiguration<Type extends DesignerValidationRuleType>(
     SELECTION: {},
     FILE: {},
     COMPARE_FIELD: { fieldId: comparisonField?.id ?? '', operator: 'EQ' },
-    EXPRESSION: { expression: defaultCondition(document, field) },
+    EXPRESSION: { expression: defaultCondition(document, field.entityCode) },
     SUBTABLE: { containerId: subtableId },
     REMOTE: { provider: '', validatorId: '' },
   }
   return configurations[type]
 }
 
-function defaultCondition(document: DesignerDocument, field: DesignerField) {
+function defaultCondition(document: DesignerDocument, entityCode: string) {
   const candidate =
-    document.dataSchema.fields.find((item) => item.entityCode === field.entityCode)?.id ?? field.id
+    document.dataSchema.fields.find((item) => item.entityCode === entityCode)?.id ??
+    document.dataSchema.fields[0]?.id ??
+    ''
   return {
     kind: 'CALL' as const,
     function: 'NOT_EMPTY' as const,
@@ -271,7 +391,7 @@ function defaultCondition(document: DesignerDocument, field: DesignerField) {
         kind: 'FIELD' as const,
         fieldId: candidate,
         scope:
-          field.entityCode === document.dataSchema.rootEntity.code
+          entityCode === document.dataSchema.rootEntity.code
             ? ('ROOT' as const)
             : ('CURRENT_ROW' as const),
       },

@@ -391,14 +391,13 @@
         }}</small>
       </div>
 
-      <ElAlert
+      <div
         v-else-if="componentType === 'online-document'"
-        type="warning"
-        :closable="false"
-        show-icon
-        title="在线文档不可用"
-        description="当前部署未配置 Web Office 服务"
-      />
+        class="designer-static-control__unavailable"
+      >
+        <ElButton disabled>在线文档不可用</ElButton>
+        <small>当前部署未配置 Web Office 服务</small>
+      </div>
 
       <ElCascader
         v-else-if="componentType === 'dynamic-cascade'"
@@ -414,14 +413,10 @@
         @update:model-value="updateValue"
       />
 
-      <ElAlert
-        v-else
-        type="error"
-        :closable="false"
-        show-icon
-        :title="`${componentName}缺少独立渲染器`"
-        description="该组件已失败关闭，不能回退为文本框"
-      />
+      <div v-else class="designer-static-control__unavailable">
+        <ElButton disabled>{{ componentName }}不可用</ElButton>
+        <small>{{ componentName }}缺少独立渲染器，已失败关闭且不能回退为文本框</small>
+      </div>
     </template>
   </div>
 </template>
@@ -1005,6 +1000,16 @@ function toCascaderOption(option: DesignerOption): CascaderOption {
 .designer-static-control__rich-content:empty::before {
   color: var(--el-text-color-placeholder);
   content: attr(data-placeholder);
+}
+
+.designer-static-control__unavailable {
+  display: grid;
+  gap: var(--daxiang-form-space-2);
+}
+
+.designer-static-control__unavailable small {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
 }
 
 .designer-static-control__serial,

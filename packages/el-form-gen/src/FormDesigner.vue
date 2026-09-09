@@ -169,6 +169,7 @@
           @update-action-bar="updateActionBar"
           @update-module="updateModule"
           @open-field-advanced="fieldAdvancedVisible = true"
+          @open-container-conditions="containerConditionVisible = true"
           @open-event-editor="eventEditorVisible = true"
           @open-global-advanced="globalAdvancedVisible = true"
           @open-schema="schemaVisible = true"
@@ -269,6 +270,14 @@
       :capabilities="fieldBehaviorCapabilities"
       @save="saveFieldBehavior"
     />
+    <DesignerContainerConditionEditor
+      v-if="selectedContainer"
+      v-model="containerConditionVisible"
+      :node="selectedContainer"
+      :document="engine.document.value"
+      :entity-code="selectedContainerEntityCode"
+      @save="saveContainerBehavior"
+    />
     <DesignerEventFlowEditor
       v-model="eventEditorVisible"
       :document="engine.document.value"
@@ -332,6 +341,7 @@ import {
   moveDesignerNode,
   removeDesignerNode,
   restoreDesignerFieldNode,
+  resolveDesignerLayoutNodeEntityCode,
   serializeDesignerDocument,
   synchronizeContainerSlots,
 } from '@daxiangme/form-core'
@@ -354,6 +364,7 @@ import type {
   DesignerActionBar,
   DesignerComponentEvent,
   DesignerContainerAppearanceDimension,
+  DesignerContainerBehavior,
   DesignerDevice,
   DesignerDocument,
   DesignerDropTarget,
@@ -375,6 +386,7 @@ import DesignerPreviewForm from './rendering/DesignerPreviewForm.vue'
 import type { DesignerFieldBehaviorCapabilities } from '@daxiangme/form-core'
 import DesignerCanvas from './workbench/DesignerCanvas.vue'
 import DesignerAdvancedBehaviorEditor from './workbench/DesignerAdvancedBehaviorEditor.vue'
+import DesignerContainerConditionEditor from './workbench/DesignerContainerConditionEditor.vue'
 import DesignerBatchDefaultEditor from './workbench/DesignerBatchDefaultEditor.vue'
 import DesignerCommandBar from './workbench/DesignerCommandBar.vue'
 import DesignerEventFlowEditor from './workbench/DesignerEventFlowEditor.vue'
@@ -456,6 +468,7 @@ const previewTargetViewCode = ref(DESIGNER_MAIN_VIEW_CODE)
 const quickGridVisible = ref(false)
 const batchDefaultVisible = ref(false)
 const fieldAdvancedVisible = ref(false)
+const containerConditionVisible = ref(false)
 const eventEditorVisible = ref(false)
 const globalAdvancedVisible = ref(false)
 const schemaVisible = ref(false)
@@ -487,6 +500,14 @@ const selectedField = computed(() => {
     ? engine.document.value.dataSchema.fields.find((field) => field.id === node.fieldId)
     : undefined
 })
+const selectedContainer = computed(() =>
+  selectedNode.value?.nodeType === 'CONTAINER' ? selectedNode.value : undefined,
+)
+const selectedContainerEntityCode = computed(() =>
+  selectedContainer.value
+    ? resolveDesignerLayoutNodeEntityCode(engine.document.value, selectedContainer.value.id)
+    : engine.document.value.dataSchema.rootEntity.code,
+)
 const previewDocument = computed(() => cloneDesignerDocument(engine.document.value))
 const previewTargetModule = computed(() =>
   engine.document.value.uiSchema.overlays.find(
@@ -811,6 +832,21 @@ function saveFieldBehavior(payload: {
     if (!field) return
     field.behavior = payload.behavior
     document.eventFlows = payload.eventFlows
+  })
+}
+
+/** 将容器条件显隐草稿作为一个历史命令保存。 */
+function saveContainerBehavior(behavior: DesignerContainerBehavior): void {
+  const nodeId = selectedContainer.value?.id
+  if (!nodeId) return
+  engine.execute((document) => {
+    const target =
+      findDesignerNode(document.uiSchema.root, nodeId) ??
+      document.uiSchema.overlays
+        .map((overlay) => findDesignerNode(overlay.root, nodeId))
+        .find(Boolean)
+    if (!target || target.nodeType !== 'CONTAINER') return
+    target.behavior = behavior
   })
 }
 

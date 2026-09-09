@@ -1,6 +1,6 @@
 <template>
   <div v-if="initializationError" class="daxiang-form">
-    <ElAlert :title="initializationError" type="error" :closable="false" />
+    <ElEmpty :description="initializationError" />
   </div>
   <DesignerSessionForm
     v-else-if="ownedSession"
@@ -92,6 +92,7 @@ function replaceSession(
       mode: props.mode,
       compatibility: 'LEGACY',
       fieldRuntimePolicy: props.fieldRuntimePolicy,
+      fieldRuntimePolicyFallback: props.fieldRuntimePolicyFallback,
       adapters: props.adapters,
       adapterContext: props.adapterContext,
     })
@@ -170,6 +171,12 @@ watch(
     ownedSession.value?.updateRuntimePolicy({ fieldRuntimePolicy })
   },
   { deep: true },
+)
+watch(
+  () => props.fieldRuntimePolicyFallback,
+  (fieldRuntimePolicyFallback) => {
+    ownedSession.value?.updateRuntimePolicy({ fieldRuntimePolicyFallback })
+  },
 )
 watch(
   [() => props.adapters, () => props.adapterContext],

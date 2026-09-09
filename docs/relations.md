@@ -45,7 +45,7 @@ async function save(batch: DesignerSubmissionBatch): Promise<void> {
 
 ## 会话 API
 
-`createDesignerRuntimeSession(options)` 接受 `document`、`initialState`、`mode`、`fieldRuntimePolicy`、`relationRuntimePolicy`、`adapters`、`adapterContext` 和 `limits`。`EDIT` / `READ_ONLY` / `DETAIL` 需要宿主提供初始身份及版本。没有初始值的 `CREATE` 创建新根行。`compatibility: 'LEGACY'` 仅供旧一级桥接使用，不应用于关系保存。
+`createDesignerRuntimeSession(options)` 接受 `document`、`initialState`、`mode`、`fieldRuntimePolicy`、`fieldRuntimePolicyFallback`、`relationRuntimePolicy`、`adapters`、`adapterContext` 和 `limits`。`EDIT` / `READ_ONLY` / `DETAIL` 需要宿主提供初始身份及版本。没有初始值的 `CREATE` 创建新根行。`compatibility: 'LEGACY'` 仅供旧一级桥接使用，不应用于关系保存。
 
 | 方法或属性                                                     | 用途                                                                    |
 | -------------------------------------------------------------- | ----------------------------------------------------------------------- |
@@ -53,9 +53,10 @@ async function save(batch: DesignerSubmissionBatch): Promise<void> {
 | `getSnapshot()`                                                | 获取修订、状态、完整运行图、脏标记、诊断、反馈、当前批次和草稿身份      |
 | `subscribe(listener)`                                          | 订阅后续快照，返回取消订阅函数                                          |
 | `dispatch(command)`                                            | 串行执行作用域命令，返回 `ok`、`issues` 及创建所得 `rowKey` / `draftId` |
-| `updateRuntimePolicy(policy)`                                  | 更新模式、字段策略或关系策略；保存冻结期间也接受收紧                    |
+| `updateRuntimePolicy(policy)`                                  | 更新模式、字段策略、缺省回退或关系策略；保存冻结期间也接受收紧          |
 | `readRow(rowKey)`                                              | 获取当前路径可见的普通及共享字段，隐藏行返回 `undefined`                |
 | `readFieldState(rowKey, fieldId)`                              | 获取具体行上的可见、必填、禁用及访问级别                                |
+| `readNodeState(rowKey, nodeId)`                                | 获取布局容器的条件显示状态                                              |
 | `readPolicy(scope, rowKey?)`                                   | 获取集合或行的权限交集                                                  |
 | `scopeFor(containerId, parentRowKey)`                          | 获取由完整父链确定的集合地址                                            |
 | `readCollection(scope)`                                        | 获取经过可见性投影的集合，包含分页与加载状态                            |
@@ -122,7 +123,20 @@ async function save(batch: DesignerSubmissionBatch): Promise<void> {
 
 ## 权限投影
 
-继续使用以字段 ID 为键的 `fieldRuntimePolicy`。新的关系权限以集合实例和具体行作用域为键，分别声明可见性、`CREATE`、`UPDATE`、`DELETE`、`LINK`、`UNLINK`，以及关联字段和目标字段权限。
+继续使用以字段 ID 为键的 `fieldRuntimePolicy`，每项只有 `accessLevel: 'EDITABLE' | 'READ_ONLY' | 'HIDDEN'`。设计文档不保存权限；必填由设计配置决定，节点权限不能临时把字段变成必填。
+
+未传映射时字段默认可编辑。传入映射后键缺失走 `fieldRuntimePolicyFallback`（默认 `HIDDEN`）；非法值仍按 `HIDDEN` 失败关闭。权限只能收紧：设计时隐藏或只读的字段，节点传可编辑无效。
+
+流程审批有两种接入方式：
+
+- **完整投影**：节点权限里补齐表单所有字段，缺省隐藏可以当作配置遗漏的保护网。
+- **部分投影**：只传节点上做过特殊控制的字段，同时把 `fieldRuntimePolicyFallback` 设为 `EDITABLE`。
+
+切换审批节点时使用 `session.updateRuntimePolicy({ fieldRuntimePolicy })`，不要替换整个会话。
+
+容器条件显隐会进一步收紧字段状态：隐藏分组、标签页或子表后，内部字段视为不可见，因此不校验、不提交、拒绝写入。同一字段出现在多处时，任一可见路径即可显示。单个标签页的显隐尚未支持。
+
+新的关系权限以集合实例和具体行作用域为键，分别声明可见性、`CREATE`、`UPDATE`、`DELETE`、`LINK`、`UNLINK`，以及关联字段和目标字段权限。
 
 最终权限同时受运行模式、宿主策略和文档配置限制。`allowCreate`、`allowDelete` 等仅能收紧权限；缺失新关系授权时不开放新的写能力。一个字段可写不能推出整行可删，也不能推出可关联共享实体。
 
@@ -177,6 +191,8 @@ session.applyReceipt(receipt)
 旧 `collections: Record<containerId, rows>` 只能迁移为根作用域下的一级集合。同一容器具有多个父作用域时必须提供新版集合身份，不支持把子集合偷偷塞进普通字段值。
 
 旧文档和旧一级表单按兼容入口处理。新增关系种类、共享目标字段与嵌套布局需要使用新版语义模型；迁移后不默认获得新的关系权限。不支持的结构应返回诊断，不能截断后继续保存。
+
+旧 BPM 把必填编码成第四种权限值 `REQUIRED`。现在只能映射为 `EDITABLE`，必填须在表单设计里配置。如果旧流程靠节点级 `REQUIRED` 实现「仅该节点必填」，迁移后这个差异会丢失。
 
 新设计文档使用 `documentVersion: '2.0'`，关系类型区分 `ONE_TO_MANY` 与 `MANY_TO_MANY`，实体统一登记于 `dataSchema.entities`。M:N 的 `childEntity` 表示关联记录实体，`targetEntity` 表示共享目标；运行值版本独立为 `runtimeVersion: '1.0'`，保存操作版本独立为 `protocolVersion: '1.0'`。
 

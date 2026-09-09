@@ -11,9 +11,11 @@ import type {
   DesignerField,
   DesignerFieldFeedback,
   DesignerFieldValueRule,
+  DesignerLayoutNode,
   DesignerLinkageConfirmationAdapter,
   DesignerRemoteValidationAdapter,
   DesignerResolvedFieldState,
+  DesignerResolvedNodeState,
   DesignerRuntimeValueStore,
   DesignerValidationResult,
   DesignerValidationRule,
@@ -76,6 +78,22 @@ export function resolveDesignerFieldState(
   }
   if (field.behavior.valueRules.some((rule) => rule.mode === 'FORMULA')) state.disabled = true
   return state
+}
+
+/** 根据容器条件显隐规则计算布局节点最终显示状态。省略否分支时与成立结果互斥。 */
+export function resolveDesignerNodeState(
+  node: DesignerLayoutNode,
+  runtime: DesignerExpressionRuntimeContext,
+): DesignerResolvedNodeState {
+  if (node.nodeType !== 'CONTAINER') return { visible: true }
+  let visible = true
+  for (const rule of node.behavior?.stateRules ?? []) {
+    if (rule.target !== 'VISIBLE') continue
+    visible = evaluateDesignerCondition(rule.condition, runtime)
+      ? rule.valueWhenTrue
+      : (rule.valueWhenFalse ?? !rule.valueWhenTrue)
+  }
+  return { visible }
 }
 
 /** 按依赖拓扑执行字段计算与联动，并直接更新当前运行值副本。 */
