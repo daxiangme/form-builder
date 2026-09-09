@@ -240,7 +240,7 @@ import {
 
 ## 从 @daxiangme/form-vue 迁移
 
-1. 将依赖替换为 `el-form-gen@0.3.0`。
+1. 将依赖替换为 `el-form-gen@0.4.0`。
 2. 样式改为 `import 'el-form-gen/style.css'`。
 3. 组件与插件改为 `ElFormDesigner`、`ElFormRenderer`、`ElFormGenPlugin`；无前缀别名已删除。
 4. 渲染器 prop `fieldAccess` 改为 `fieldRuntimePolicy`。
