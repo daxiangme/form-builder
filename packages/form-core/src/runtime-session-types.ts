@@ -335,6 +335,12 @@ export interface FormSubmissionStatusAdapter {
 /** 所有受控字段、关系、事件和草稿写入的统一命令。 */
 export type DesignerRuntimeCommand =
   | { type: 'SET_FIELD'; rowKey: string; fieldId: string; value: unknown }
+  | {
+      type: 'APPLY_FIELD_ASSIGNMENTS'
+      rowKey: string
+      sourceFieldId: string
+      source: Record<string, unknown>
+    }
   | { type: 'REVERT_FIELD'; rowKey: string; fieldId: string }
   | { type: 'CREATE_ROW'; scope: DesignerCollectionScope; values?: Record<string, unknown> }
   | { type: 'COPY_ROW'; rowKey: string }

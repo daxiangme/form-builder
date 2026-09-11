@@ -35,8 +35,13 @@
 .daxiang-form-dialog-radius-custom.el-dialog,
 .daxiang-form-dialog-radius-custom {
   --el-border-radius-base: var(--daxiang-form-dialog-radius);
+  --el-dialog-border-radius: var(--daxiang-form-dialog-radius);
 
   border-radius: var(--daxiang-form-dialog-radius);
+}
+
+.el-dropdown-menu__item > .daxiang-form-icon:not(:only-child) {
+  margin-inline-end: 6px;
 }
 
 html.dark .daxiang-form,
@@ -49,4 +54,13 @@ html.dark .daxiang-form-drawer {
 .daxiang-form-modal *,
 .daxiang-form-drawer * {
   box-sizing: border-box;
+}
+
+.daxiang-form .daxiang-form-grid-gap {
+  min-height: 0;
+  height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  overflow: hidden;
+  pointer-events: none;
 }

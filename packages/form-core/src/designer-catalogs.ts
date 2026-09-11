@@ -4,6 +4,7 @@ import type {
   DesignerDiagnostic,
   FormDesignerCatalogs,
   FormDesignerComponentCatalogItem,
+  FormDesignerHostCapabilities,
 } from './types'
 
 /** 应用设计资源目录后的组件列表与诊断。 */
@@ -12,11 +13,64 @@ export interface DesignerCatalogResolution {
   diagnostics: DesignerDiagnostic[]
 }
 
+const DEPRECATED_COMPONENT_CAPABILITIES: Array<{
+  key: keyof FormDesignerHostCapabilities
+  componentTypes: string[]
+  reason: string
+}> = [
+  { key: 'upload', componentTypes: ['file'], reason: '当前宿主未提供上传能力' },
+  { key: 'ocr', componentTypes: ['ocr'], reason: '当前宿主未提供 OCR 能力' },
+  {
+    key: 'scan',
+    componentTypes: ['scan-code'],
+    reason: '当前宿主未提供扫码能力',
+  },
+  {
+    key: 'location',
+    componentTypes: ['position'],
+    reason: '当前宿主未提供定位能力',
+  },
+  {
+    key: 'dynamicOptions',
+    componentTypes: ['dynamic-select', 'dynamic-cascade'],
+    reason: '当前宿主未提供动态选项能力',
+  },
+  {
+    key: 'challenge',
+    componentTypes: ['captcha'],
+    reason: '当前宿主未提供验证码渠道',
+  },
+  {
+    key: 'personalSignature',
+    componentTypes: ['signature'],
+    reason: '当前宿主未提供个人签名能力',
+  },
+  {
+    key: 'regionCascade',
+    componentTypes: ['region'],
+    reason: '当前宿主未提供地区级联能力',
+  },
+  {
+    key: 'directory',
+    componentTypes: ['user', 'role', 'organization', 'post'],
+    reason: '当前宿主未提供目录查询能力',
+  },
+]
+
+const DEPRECATED_ADAPTER_CAPABILITIES: Array<{
+  key: keyof FormDesignerHostCapabilities
+  adapter: string
+}> = [
+  { key: 'remoteValidation', adapter: 'remoteValidation' },
+  { key: 'dataSource', adapter: 'dataSource' },
+  { key: 'dateRange', adapter: 'dateRange' },
+]
+
 /**
  * 将宿主目录与内置注册表求交集。
  *
- * 未知组件类型只产生诊断，不会动态注册或执行。未提供组件目录时保留内置注册表，
- * 再按宿主能力开关收紧上传、OCR、扫码、定位等条件能力。
+ * 组件可用性只认 `catalogs.components` 三态。未知组件类型只产生诊断，不会动态注册或执行。
+ * 未提供组件目录时保留内置注册表。`capabilities` 已废弃：`false` 仍会把对应组件收成 `CONDITIONAL` 并覆盖原因。
  *
  * @param catalogs 宿主加载的纯数据目录
  * @returns 可展示的内置组件副本和失败关闭诊断
@@ -37,6 +91,7 @@ export function resolveDesignerCatalogComponents(
     }
   }
 
+  diagnoseDeprecatedCapabilities(catalogs, diagnostics)
   applyCapabilityOverrides(catalogs, resolved)
   return {
     components: DESIGNER_COMPONENTS.map(
@@ -49,6 +104,24 @@ export function resolveDesignerCatalogComponents(
     ),
     diagnostics,
   }
+}
+
+/**
+ * 按稳定组件编码读取目录解析后的注册项。
+ *
+ * 未传入目录时与内置注册表一致。未知编码返回 `undefined`，不会动态注册。
+ *
+ * @param componentType 内置组件编码
+ * @param catalogs 宿主加载的纯数据目录
+ * @returns 解析后的组件副本；未注册时为空
+ */
+export function findDesignerCatalogComponent(
+  componentType: string,
+  catalogs?: FormDesignerCatalogs,
+): DesignerComponentRegistration | undefined {
+  return resolveDesignerCatalogComponents(catalogs).components.find(
+    (item) => item.componentType === componentType,
+  )
 }
 
 /**
@@ -93,7 +166,41 @@ function applyExplicitComponentCatalog(
 }
 
 /**
- * 按宿主能力开关把缺少真实端口的组件收紧为条件不可用。
+ * 对仍传入的历史能力开关发出废弃诊断。
+ *
+ * @param catalogs 宿主目录
+ * @param diagnostics 输出诊断
+ */
+function diagnoseDeprecatedCapabilities(
+  catalogs: FormDesignerCatalogs | undefined,
+  diagnostics: DesignerDiagnostic[],
+): void {
+  const capabilities = catalogs?.capabilities
+  if (!capabilities) return
+  for (const target of DEPRECATED_COMPONENT_CAPABILITIES) {
+    if (!Object.hasOwn(capabilities, target.key)) continue
+    diagnostics.push({
+      severity: 'WARNING',
+      code: 'CATALOG_DEPRECATED_CAPABILITY',
+      message: `capabilities.${target.key} 已废弃，请改用 catalogs.components 中 ${target.componentTypes.join('、')} 的三态`,
+      path: `$.catalogs.capabilities.${target.key}`,
+    })
+  }
+  for (const target of DEPRECATED_ADAPTER_CAPABILITIES) {
+    if (!Object.hasOwn(capabilities, target.key)) continue
+    diagnostics.push({
+      severity: 'WARNING',
+      code: 'CATALOG_DEPRECATED_CAPABILITY',
+      message: `capabilities.${target.key} 已废弃且不会影响组件目录，请通过 adapters.${target.adapter} 声明运行能力`,
+      path: `$.catalogs.capabilities.${target.key}`,
+    })
+  }
+}
+
+/**
+ * 按宿主能力开关把缺少真实端口的组件收紧为条件可用。
+ *
+ * 仅兼容历史 `capabilities`：显式 `false` 会覆盖为 `CONDITIONAL` 并替换原因。
  *
  * @param catalogs 宿主目录
  * @param resolved 已解析组件副本
@@ -104,47 +211,8 @@ function applyCapabilityOverrides(
 ): void {
   const capabilities = catalogs?.capabilities
   if (!capabilities) return
-  const capabilityTargets: Array<{
-    enabled: boolean | undefined
-    componentTypes: string[]
-    reason: string
-  }> = [
-    { enabled: capabilities.upload, componentTypes: ['file'], reason: '当前宿主未提供上传能力' },
-    { enabled: capabilities.ocr, componentTypes: ['ocr'], reason: '当前宿主未提供 OCR 能力' },
-    { enabled: capabilities.scan, componentTypes: ['scan-code'], reason: '当前宿主未提供扫码能力' },
-    {
-      enabled: capabilities.location,
-      componentTypes: ['position'],
-      reason: '当前宿主未提供定位能力',
-    },
-    {
-      enabled: capabilities.dynamicOptions,
-      componentTypes: ['dynamic-select', 'dynamic-cascade'],
-      reason: '当前宿主未提供动态选项能力',
-    },
-    {
-      enabled: capabilities.challenge,
-      componentTypes: ['captcha'],
-      reason: '当前宿主未提供验证码渠道',
-    },
-    {
-      enabled: capabilities.personalSignature,
-      componentTypes: ['signature'],
-      reason: '当前宿主未提供个人签名能力',
-    },
-    {
-      enabled: capabilities.regionCascade,
-      componentTypes: ['region'],
-      reason: '当前宿主未提供地区级联能力',
-    },
-    {
-      enabled: capabilities.directory,
-      componentTypes: ['user', 'role', 'organization', 'post'],
-      reason: '当前宿主未提供目录查询能力',
-    },
-  ]
-  for (const target of capabilityTargets) {
-    if (target.enabled !== false) continue
+  for (const target of DEPRECATED_COMPONENT_CAPABILITIES) {
+    if (capabilities[target.key] !== false) continue
     for (const componentType of target.componentTypes) {
       const current = resolved.get(componentType)
       if (!current || current.availability === 'UNAVAILABLE') continue

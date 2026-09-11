@@ -5,9 +5,9 @@
         <strong v-if="title">{{ title }}</strong>
         <span>{{ modelValue.length }} 条</span>
       </div>
-      <ElButton v-if="canCreate" type="primary" link @click="addRow">
-        <DxSvgIcon icon="ri:add-line" />新增一行
-      </ElButton>
+      <FormButton v-if="canCreate" type="primary" link icon="ri:add-line" @click="addRow">
+        新增一行
+      </FormButton>
     </header>
 
     <ElEmpty
@@ -165,7 +165,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch, nextTick } from 'vue'
-import DxSvgIcon from '../../infrastructure/FormIcon.vue'
+import FormButton from '../../infrastructure/FormButton.vue'
 import {
   cloneDesignerSubtableRow,
   createDesignerSubtableGridLayout,

@@ -62,11 +62,16 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import DxSvgIcon from '../infrastructure/FormIcon.vue'
 import dayjs from 'dayjs'
-import { formatDesignerNumber } from '@daxiangme/form-core'
-import type { DesignerField, DesignerOption } from '@daxiangme/form-core'
+import { formatDesignerNumber, FORM_LOCATION_OUTPUT_FIELDS } from '@daxiangme/form-core'
+import type {
+  DesignerField,
+  DesignerOption,
+  DesignerRuntimeAdapters,
+  FormRuntimeAdapterContext,
+} from '@daxiangme/form-core'
 import DxStepProgress from '../form/controls/DxStepProgress.vue'
 
 defineOptions({ name: 'DesignerDetailField' })
@@ -78,8 +83,10 @@ const props = withDefaults(
     showLabel: boolean
     compact?: boolean
     showHelp?: boolean
+    adapters?: DesignerRuntimeAdapters
+    adapterContext?: FormRuntimeAdapterContext
   }>(),
-  { compact: false },
+  { compact: false, adapterContext: () => ({}) },
 )
 
 const emptyText = '—'
@@ -88,15 +95,20 @@ const options = computed<DesignerOption[]>(() =>
   normalizeOptions(props.field.configuration.options),
 )
 const empty = computed(() => isEmptyValue(props.modelValue))
-const imageValue = computed(() =>
-  typeof props.modelValue === 'string' && props.modelValue.startsWith('data:image/')
-    ? props.modelValue
-    : '',
-)
+const resolvedSignatureUrl = ref('')
+const imageValue = computed(() => {
+  const value = typeof props.modelValue === 'string' ? props.modelValue : ''
+  if (value.startsWith('data:image/') || value.startsWith('blob:') || /^https?:/i.test(value)) {
+    return value
+  }
+  return resolvedSignatureUrl.value
+})
 const opinionText = computed(() => objectText(props.modelValue, 'opinion'))
 const opinionSignature = computed(() => {
   const value = objectText(props.modelValue, 'signature')
-  return value.startsWith('data:image/') ? value : ''
+  return value.startsWith('data:image/') || value.startsWith('blob:') || /^https?:/i.test(value)
+    ? value
+    : ''
 })
 const detailFiles = computed(() => {
   if (!Array.isArray(props.modelValue)) return []
@@ -130,15 +142,64 @@ const positionItems = computed(() => {
   const labels: Record<string, string> = {
     longitude: '经度',
     latitude: '纬度',
-    accuracy: '精度',
-    capturedAt: '采集时间',
+    coordinateSystem: '坐标系',
+    address: '地址',
+    name: '地点',
+    province: '省',
+    city: '市',
+    district: '区',
+    township: '乡镇',
+    streetAddress: '街道',
+    adcode: '区划编码',
+    adcodePath: '区划路径',
+    source: '来源',
+    collectedAt: '采集时间',
+    provider: '服务商',
+    accuracyMeters: '精度（米）',
   }
-  return Object.entries(labels).flatMap(([key, label]) => {
+  const keys = ['coordinateSystem', ...FORM_LOCATION_OUTPUT_FIELDS]
+  return keys.flatMap((key) => {
     const value = source[key]
-    return isEmptyValue(value) ? [] : [{ label, value: String(value) }]
+    if (isEmptyValue(value)) return []
+    return [
+      {
+        label: labels[key] ?? key,
+        value: Array.isArray(value) ? value.join(' / ') : String(value),
+      },
+    ]
   })
 })
 const displayText = computed(() => formatValue(props.modelValue))
+
+watch(
+  () => [props.field.componentType, props.modelValue, props.adapters?.asset] as const,
+  async ([componentType, value, adapter]) => {
+    if (componentType !== 'signature' || typeof value !== 'string' || !value) {
+      resolvedSignatureUrl.value = ''
+      return
+    }
+    if (value.startsWith('data:') || value.startsWith('blob:') || /^https?:/i.test(value)) {
+      resolvedSignatureUrl.value = ''
+      return
+    }
+    if (!adapter) {
+      resolvedSignatureUrl.value = ''
+      return
+    }
+    try {
+      const [asset] = await adapter.resolve({
+        assetIds: [value],
+        fieldId: props.field.id,
+        fieldCode: props.field.key,
+        context: props.adapterContext,
+      })
+      resolvedSignatureUrl.value = asset?.downloadUrl ?? ''
+    } catch {
+      resolvedSignatureUrl.value = ''
+    }
+  },
+  { immediate: true },
+)
 
 function formatValue(value: unknown): string {
   if (isEmptyValue(value)) return emptyText

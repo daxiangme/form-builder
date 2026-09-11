@@ -205,7 +205,7 @@
     >
       <div class="designer-canvas-node__subtable-bar">
         <span>示例行</span>
-        <ElButton disabled><DxSvgIcon icon="ri:add-line" />新增一行</ElButton>
+        <FormButton disabled icon="ri:add-line">新增一行</FormButton>
       </div>
       <template v-for="slot in node.slots" :key="slot.id">
         <div
@@ -408,6 +408,7 @@ import { computed, ref, watchEffect } from 'vue'
 import type { CSSProperties } from 'vue'
 import { VueDraggable, type SortableEvent } from 'vue-draggable-plus'
 import DxSvgIcon from '../infrastructure/FormIcon.vue'
+import FormButton from '../infrastructure/FormButton.vue'
 import { projectDesignerCanvas } from '@daxiangme/form-core'
 import { findDesignerComponent } from '@daxiangme/form-core'
 import {

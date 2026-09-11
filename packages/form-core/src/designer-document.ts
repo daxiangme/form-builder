@@ -1,4 +1,8 @@
 import { findDesignerComponent } from './component-registry'
+import { advanceDesignerGridCursor, DESIGNER_GRID_COLUMNS } from './canvas-projection'
+import { parseDesignerFieldAssignments, parseDesignerResultKeys } from './field-assignment'
+import { FORM_LOCATION_OUTPUT_FIELDS } from './location-value'
+import { findDesignerCatalogComponent, resolveDesignerCatalogComponents } from './designer-catalogs'
 import {
   createLocalDesignerDataSchema,
   diagnoseDesignerDataModel,
@@ -36,6 +40,7 @@ import {
   type DesignerOutlineItem,
   type DesignerPropertyDefinition,
   type DesignerResponsiveGrid,
+  type FormDesignerCatalogs,
 } from './types'
 
 const DEFAULT_APPEARANCE: DesignerDocument['appearance'] = {
@@ -181,14 +186,17 @@ export function canMoveDesignerNode(
  * @param document 当前设计文档。
  * @param componentType 待创建的稳定组件编码。
  * @param target 包含目标容器、命名插槽、索引和可选栅格列的完整落点。
+ * @param catalogs 可选的设计器目录。新建组件时按目录三态拒绝 `UNAVAILABLE`。
  * @returns 空字符串表示允许，否则返回可直接展示的拒绝原因。
  */
 export function designerComponentDropRejection(
   document: DesignerDocument,
   componentType: string,
   target: DesignerDropTarget,
+  catalogs?: FormDesignerCatalogs,
 ): string {
-  const registration = findDesignerComponent(componentType)
+  const registration =
+    findDesignerCatalogComponent(componentType, catalogs) ?? findDesignerComponent(componentType)
   if (!registration) return `组件 ${componentType} 未注册`
   if (registration.availability === 'UNAVAILABLE') return registration.unavailableReason
   const targetRejection = dropTargetRejection(document, target)
@@ -489,24 +497,37 @@ export function migrateDesignerDocument(
  * 校验未知文档输入的版本、字段、组件、布局、typed slots 和引用完整性。
  *
  * 该入口承担导入边界，任何非法结构都必须返回诊断而不能把类型异常抛给工作台。
+ *
+ * @param catalogs 可选的设计器目录。传入后按解析结果判断组件可用性，并合并目录诊断。
  */
 export function diagnoseDesignerDocument(
   source: unknown,
   limits: DesignerDocumentLimits = {},
+  catalogs?: FormDesignerCatalogs,
 ): DesignerDiagnostic[] {
   try {
     return diagnoseDesignerDocumentInternal(
       isRecord(source) ? normalizeDesignerDocument(source) : source,
       limits,
+      catalogs,
     )
   } catch {
     return [diagnostic('ERROR', 'DOCUMENT_DIAGNOSTIC', '导入内容结构异常，无法完成安全诊断', '$')]
   }
 }
 
+/** 诊断优先使用目录解析后的注册项，未传入目录时回退到内置注册表。 */
+function lookupDiagnoseComponent(
+  componentType: string,
+  catalogByType?: Map<string, DesignerComponentRegistration>,
+): DesignerComponentRegistration | undefined {
+  return catalogByType?.get(componentType) ?? findDesignerComponent(componentType)
+}
+
 function diagnoseDesignerDocumentInternal(
   source: unknown,
   limits: DesignerDocumentLimits,
+  catalogs?: FormDesignerCatalogs,
 ): DesignerDiagnostic[] {
   const result: DesignerDiagnostic[] = []
   if (
@@ -515,6 +536,11 @@ function diagnoseDesignerDocumentInternal(
     )
   )
     return [diagnostic('ERROR', 'DOCUMENT_LIMITS', '文档资源限制必须为正整数', '$')]
+  const catalogResolution = catalogs ? resolveDesignerCatalogComponents(catalogs) : undefined
+  const catalogByType = catalogResolution
+    ? new Map(catalogResolution.components.map((item) => [item.componentType, item]))
+    : undefined
+  if (catalogResolution) result.push(...catalogResolution.diagnostics)
   if (!isRecord(source)) {
     result.push(diagnostic('ERROR', 'DOCUMENT_TYPE', '设计文档必须是对象', '$'))
     return result
@@ -693,7 +719,7 @@ function diagnoseDesignerDocumentInternal(
     }
     const registration =
       typeof field.componentType === 'string'
-        ? findDesignerComponent(field.componentType)
+        ? lookupDiagnoseComponent(field.componentType, catalogByType)
         : undefined
     if (!registration || registration.nodeKind !== 'FIELD') {
       result.push(
@@ -748,6 +774,7 @@ function diagnoseDesignerDocumentInternal(
       )
     }
   }
+  diagnoseCollectionFieldAssignments(fieldMap, result)
   const nodeIds = new Set<string>()
   if (root)
     diagnoseNodes(
@@ -760,6 +787,7 @@ function diagnoseDesignerDocumentInternal(
       0,
       new WeakSet(),
       limits.maxLayoutDepth ?? 32,
+      catalogByType,
     )
   if (uiSchema && Array.isArray(uiSchema.overlays)) {
     for (const [index, overlay] of uiSchema.overlays.entries()) {
@@ -774,6 +802,7 @@ function diagnoseDesignerDocumentInternal(
         0,
         new WeakSet(),
         limits.maxLayoutDepth ?? 32,
+        catalogByType,
       )
     }
   }
@@ -899,16 +928,12 @@ function positionDesignerNodeAtColumn(
   const node = collection[nodeIndex]
   if (!node || nodeIndex < 0) return
   const desiredStart = Math.max(0, Math.min(23, Math.trunc(columnStart)))
-  const span = Math.max(1, Math.min(24, node.layout.pc.span))
+  const span = Math.max(1, Math.min(DESIGNER_GRID_COLUMNS, node.layout.pc.span))
   let cursor = 0
   for (const previous of collection.slice(0, nodeIndex)) {
-    const previousSpan = Math.max(1, Math.min(24, previous.layout.pc.span))
-    const previousOffset = Math.max(0, Math.min(23, previous.layout.pc.offset))
-    if (cursor > 0 && cursor + previousOffset + previousSpan > 24) cursor = 0
-    cursor = Math.min(24, cursor + previousOffset + previousSpan)
-    if (cursor >= 24) cursor = 0
+    cursor = advanceDesignerGridCursor(cursor, previous.layout.pc.offset, previous.layout.pc.span)
   }
-  node.layout.pc.offset = Math.max(0, Math.min(24 - span, desiredStart - cursor))
+  node.layout.pc.offset = Math.max(0, Math.min(DESIGNER_GRID_COLUMNS - span, desiredStart - cursor))
 }
 
 function defaultValueFor(type: DesignerField['semanticType']): unknown {
@@ -1096,6 +1121,7 @@ function diagnoseNodes(
   depth: number,
   seenNodes: WeakSet<object>,
   maxDepth: number,
+  catalogByType?: Map<string, DesignerComponentRegistration>,
 ): void {
   if (!Array.isArray(nodes)) {
     result.push(diagnostic('ERROR', 'LAYOUT_COLLECTION', '布局 children 必须是数组', path))
@@ -1166,7 +1192,9 @@ function diagnoseNodes(
       result,
     )
     const registration =
-      typeof node.componentType === 'string' ? findDesignerComponent(node.componentType) : undefined
+      typeof node.componentType === 'string'
+        ? lookupDiagnoseComponent(node.componentType, catalogByType)
+        : undefined
     if (!registration || registration.nodeKind !== 'CONTAINER') {
       result.push(
         diagnostic(
@@ -1343,6 +1371,7 @@ function diagnoseNodes(
         depth + 1,
         seenNodes,
         maxDepth,
+        catalogByType,
       )
     }
   }
@@ -1528,6 +1557,11 @@ function diagnosePropertyValue(
       pushConfigurationTypeDiagnostic(registration, definition.label, path, result)
     return
   }
+  if (editor.type === 'FIELD_ID') {
+    if (typeof value !== 'string')
+      pushConfigurationTypeDiagnostic(registration, definition.label, path, result)
+    return
+  }
   if (editor.type === 'URL') {
     if (typeof value !== 'string') {
       pushConfigurationTypeDiagnostic(registration, definition.label, path, result)
@@ -1607,6 +1641,65 @@ function diagnosePropertyValue(
   }
   if (editor.type === 'OPTIONS') {
     diagnoseConfigurationOptions(registration, definition.label, value, path, result, new WeakSet())
+    return
+  }
+  if (editor.type === 'MULTI_SELECT') {
+    if (!Array.isArray(value)) {
+      pushConfigurationTypeDiagnostic(registration, definition.label, path, result)
+      return
+    }
+    const optionValues = editor.options.map((item) => item.value)
+    for (const [index, item] of value.entries()) {
+      if (
+        !optionValues.some((optionValue) => optionValue === item) &&
+        editor.legacyValuePolicy !== 'PRESERVE'
+      ) {
+        result.push(
+          diagnostic(
+            'ERROR',
+            'COMPONENT_CONFIGURATION_ENUM',
+            `${registration.name}的“${definition.label}”包含不受支持的选项`,
+            `${path}[${index}]`,
+          ),
+        )
+      }
+    }
+    return
+  }
+  if (editor.type === 'RESULT_KEYS') {
+    if (!Array.isArray(value)) {
+      pushConfigurationTypeDiagnostic(registration, definition.label, path, result)
+      return
+    }
+    for (const [index, item] of value.entries()) {
+      if (typeof item !== 'object' || item === null || Array.isArray(item)) {
+        pushConfigurationTypeDiagnostic(registration, definition.label, `${path}[${index}]`, result)
+        continue
+      }
+      const key = (item as Record<string, unknown>).key
+      const name = (item as Record<string, unknown>).name
+      if (typeof key !== 'string' || !key || (name !== undefined && typeof name !== 'string')) {
+        pushConfigurationTypeDiagnostic(registration, definition.label, `${path}[${index}]`, result)
+      }
+    }
+    return
+  }
+  if (editor.type === 'FIELD_ASSIGNMENTS') {
+    if (!Array.isArray(value)) {
+      pushConfigurationTypeDiagnostic(registration, definition.label, path, result)
+      return
+    }
+    for (const [index, item] of value.entries()) {
+      if (typeof item !== 'object' || item === null || Array.isArray(item)) {
+        pushConfigurationTypeDiagnostic(registration, definition.label, `${path}[${index}]`, result)
+        continue
+      }
+      const sourceKey = (item as Record<string, unknown>).sourceKey
+      const targetFieldId = (item as Record<string, unknown>).targetFieldId
+      if (typeof sourceKey !== 'string' || typeof targetFieldId !== 'string') {
+        pushConfigurationTypeDiagnostic(registration, definition.label, `${path}[${index}]`, result)
+      }
+    }
   }
 }
 
@@ -1664,6 +1757,23 @@ function diagnoseRelatedConfigurationValues(
       ),
     )
   }
+  if (registration.componentType === 'position') {
+    diagnosePositionConfiguration(registration, configuration, path, result)
+  }
+  if (registration.componentType === 'ocr') {
+    const mappings = parseDesignerFieldAssignments(configuration.fieldMappings)
+    const keys = parseDesignerResultKeys(configuration.resultKeys)
+    if (keys.length === 0 && mappings.length > 0) {
+      result.push(
+        diagnostic(
+          'ERROR',
+          'OCR_MAPPING_MISSING_TYPE',
+          'OCR 配置了回填映射但尚未声明接口返回值',
+          `${path}.resultKeys`,
+        ),
+      )
+    }
+  }
 }
 
 function diagnoseOrderedConfigurationPair(
@@ -1687,6 +1797,149 @@ function diagnoseOrderedConfigurationPair(
       `${path}.${minimumKey}`,
     ),
   )
+}
+
+function diagnosePositionConfiguration(
+  registration: DesignerComponentRegistration,
+  configuration: Record<string, unknown>,
+  path: string,
+  result: DesignerDiagnostic[],
+): void {
+  const outputFields = Array.isArray(configuration.outputFields)
+    ? configuration.outputFields.filter((item) => typeof item === 'string')
+    : []
+  const mappings = parseDesignerFieldAssignments(configuration.fieldMappings)
+  if (outputFields.length === 0 && mappings.length === 0) {
+    result.push(
+      diagnostic(
+        'ERROR',
+        'LOCATION_OUTPUT_EMPTY',
+        `${registration.name}至少勾选一项输出或配置一条回填映射`,
+        `${path}.outputFields`,
+      ),
+    )
+  }
+  const hasLongitude = outputFields.includes('longitude')
+  const hasLatitude = outputFields.includes('latitude')
+  if (hasLongitude !== hasLatitude) {
+    result.push(
+      diagnostic(
+        'ERROR',
+        'LOCATION_COORDINATE_PAIR',
+        '经度与纬度必须同时勾选',
+        `${path}.outputFields`,
+      ),
+    )
+  }
+}
+
+function diagnoseCollectionFieldAssignments(
+  fieldMap: Map<string, DesignerField>,
+  result: DesignerDiagnostic[],
+): void {
+  for (const field of fieldMap.values()) {
+    const path = `$.dataSchema.fields[id=${field.id}].configuration`
+    const keys = assignmentSourceKeys(field)
+    const mappings = parseDesignerFieldAssignments(field.configuration.fieldMappings)
+    const seenTargets = new Set<string>()
+    for (const [index, mapping] of mappings.entries()) {
+      const mappingPath = `${path}.fieldMappings[${index}]`
+      if (keys.length > 0 && !keys.includes(mapping.sourceKey)) {
+        result.push(
+          diagnostic(
+            'ERROR',
+            'FIELD_ASSIGNMENT_UNKNOWN_SOURCE',
+            `回填来源键 ${mapping.sourceKey} 未在当前组件声明`,
+            `${mappingPath}.sourceKey`,
+          ),
+        )
+      }
+      const target = fieldMap.get(mapping.targetFieldId)
+      if (!target) {
+        result.push(
+          diagnostic(
+            'ERROR',
+            'FIELD_ASSIGNMENT_UNKNOWN_TARGET',
+            '回填目标字段不存在',
+            `${mappingPath}.targetFieldId`,
+          ),
+        )
+        continue
+      }
+      if (target.entityCode !== field.entityCode) {
+        result.push(
+          diagnostic(
+            'ERROR',
+            'FIELD_ASSIGNMENT_CROSS_ENTITY',
+            '回填目标必须属于同一实体',
+            `${mappingPath}.targetFieldId`,
+          ),
+        )
+      }
+      if (seenTargets.has(mapping.targetFieldId)) {
+        result.push(
+          diagnostic(
+            'WARNING',
+            'FIELD_ASSIGNMENT_DUPLICATE_TARGET',
+            '同一目标字段被多条回填映射指向',
+            `${mappingPath}.targetFieldId`,
+          ),
+        )
+      }
+      seenTargets.add(mapping.targetFieldId)
+      if (assignmentTypeMismatch(mapping.sourceKey, target)) {
+        result.push(
+          diagnostic(
+            'WARNING',
+            'FIELD_ASSIGNMENT_TYPE_MISMATCH',
+            `来源键 ${mapping.sourceKey} 与目标组件 ${target.componentType} 类型不匹配`,
+            `${mappingPath}.targetFieldId`,
+          ),
+        )
+      }
+    }
+    const scanParameterFieldId = field.configuration.scanParameterFieldId
+    if (typeof scanParameterFieldId === 'string' && scanParameterFieldId) {
+      const target = fieldMap.get(scanParameterFieldId)
+      if (!target) {
+        result.push(
+          diagnostic(
+            'ERROR',
+            'FIELD_ASSIGNMENT_UNKNOWN_TARGET',
+            '扫码入参字段不存在',
+            `${path}.scanParameterFieldId`,
+          ),
+        )
+      } else if (target.entityCode !== field.entityCode) {
+        result.push(
+          diagnostic(
+            'ERROR',
+            'FIELD_ASSIGNMENT_CROSS_ENTITY',
+            '扫码入参字段必须属于同一实体',
+            `${path}.scanParameterFieldId`,
+          ),
+        )
+      }
+    }
+  }
+}
+
+function assignmentSourceKeys(field: DesignerField): string[] {
+  if (field.componentType === 'ocr') {
+    return parseDesignerResultKeys(field.configuration.resultKeys).map((item) => item.key)
+  }
+  if (field.componentType === 'position') {
+    return [...FORM_LOCATION_OUTPUT_FIELDS]
+  }
+  return []
+}
+
+function assignmentTypeMismatch(sourceKey: string, target: DesignerField): boolean {
+  if (sourceKey === 'adcodePath') return target.componentType !== 'region'
+  if (sourceKey === 'longitude' || sourceKey === 'latitude' || sourceKey === 'accuracyMeters') {
+    return target.semanticType !== 'NUMBER' && target.semanticType !== 'STRING'
+  }
+  return target.componentType === 'region'
 }
 
 function isFiniteNumber(value: unknown): value is number {

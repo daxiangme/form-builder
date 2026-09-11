@@ -88,6 +88,50 @@
       @update:model-value="emitValue"
     />
     <ElSelect
+      v-else-if="editor.type === 'MULTI_SELECT'"
+      :model-value="multiSelectValue"
+      multiple
+      clearable
+      class="designer-property-editor__multi-select"
+      @update:model-value="emitValue"
+    >
+      <ElOption
+        v-for="option in multiSelectOptions"
+        :key="String(option.value)"
+        :label="option.label"
+        :value="option.value"
+        :disabled="option.disabled"
+      />
+    </ElSelect>
+    <DesignerResultKeysEditor
+      v-else-if="editor.type === 'RESULT_KEYS'"
+      :model-value="modelValue"
+      @update:model-value="emitValue"
+    />
+    <DesignerFieldAssignmentsEditor
+      v-else-if="editor.type === 'FIELD_ASSIGNMENTS'"
+      :model-value="modelValue"
+      :configuration="configuration"
+      :source-keys="editor.sourceKeys"
+      :field-candidates="fieldCandidates"
+      @update:model-value="emitValue"
+    />
+    <ElSelect
+      v-else-if="editor.type === 'FIELD_ID'"
+      :model-value="stringValue"
+      filterable
+      clearable
+      placeholder="选择同实体字段"
+      @update:model-value="emitValue"
+    >
+      <ElOption
+        v-for="field in fieldCandidates"
+        :key="field.id"
+        :label="field.label"
+        :value="field.id"
+      />
+    </ElSelect>
+    <ElSelect
       v-else-if="editor.type === 'DATE_FORMAT'"
       :model-value="primitiveValue"
       @update:model-value="emitValue"
@@ -170,6 +214,8 @@ import {
   parseDesignerRadiusInput,
 } from '@daxiangme/form-core'
 import DesignerOptionsEditor from './DesignerOptionsEditor.vue'
+import DesignerResultKeysEditor from './DesignerResultKeysEditor.vue'
+import DesignerFieldAssignmentsEditor from './DesignerFieldAssignmentsEditor.vue'
 
 defineOptions({ name: 'DesignerPropertyEditorHost' })
 
@@ -178,9 +224,11 @@ const props = withDefaults(
     definition: DesignerPropertyDefinition
     modelValue: unknown
     configuration?: Readonly<Record<string, unknown>>
+    fieldCandidates?: Array<{ id: string; label: string }>
   }>(),
   {
     configuration: () => ({}),
+    fieldCandidates: () => [],
   },
 )
 const emit = defineEmits<{ 'update:modelValue': [value: unknown] }>()
@@ -249,6 +297,10 @@ const controlledOptions = computed<DesignerPropertyOption[]>(() => {
 })
 const radiusOptions = computed(() =>
   editor.value.type === 'RADIUS' ? controlledOptions.value : [],
+)
+const multiSelectValue = computed(() => (Array.isArray(props.modelValue) ? props.modelValue : []))
+const multiSelectOptions = computed(() =>
+  editor.value.type === 'MULTI_SELECT' ? editor.value.options : [],
 )
 const selectedFileExtensions = computed(() => parseFileExtensions(stringValue.value))
 const fileTypeGroups = computed(() =>
@@ -381,6 +433,14 @@ function finiteInteger(value: unknown, fallback: number): number {
 .designer-property-editor :deep(.el-input-number),
 .designer-property-editor :deep(.el-segmented) {
   width: 100%;
+}
+
+.designer-property-editor__multi-select :deep(.el-select__selection) {
+  flex-wrap: wrap;
+}
+
+.designer-property-editor__multi-select :deep(.el-select__selected-item) {
+  max-width: 100%;
 }
 
 .designer-property-editor__unit-control {

@@ -41,7 +41,7 @@
 
 <script setup lang="ts">
 import { computed, type CSSProperties } from 'vue'
-import type { DesignerRadiusValue } from '@daxiangme/form-core'
+import { DESIGNER_DIALOG_DEFAULT_RADIUS_PX, type DesignerRadiusValue } from '@daxiangme/form-core'
 import { designerDialogRadiusBind } from '../designer-radius-style'
 
 defineOptions({ name: 'FormModalShell' })
@@ -51,7 +51,7 @@ const props = withDefaults(
     modelValue: boolean
     title?: string
     dialogClass?: string
-    /** 弹窗外壳圆角；`THEME` 跟随宿主 `--el-border-radius-base`。 */
+    /** 弹窗外壳圆角；未指定或 `THEME` 时为 16px，数字为自定义像素。 */
     radius?: DesignerRadiusValue
     width?: string | number
     maxHeight?: string | number
@@ -75,7 +75,7 @@ const props = withDefaults(
   {
     title: '',
     dialogClass: '',
-    radius: 'THEME',
+    radius: DESIGNER_DIALOG_DEFAULT_RADIUS_PX,
     width: 640,
     maxHeight: 'calc(100vh - var(--daxiang-form-space-4) * 2)',
     loading: false,
@@ -166,8 +166,16 @@ defineExpose({ busy, requestClose, requestConfirm })
 }
 
 .daxiang-form-modal .daxiang-form-modal__body {
+  display: flex;
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
+  flex-direction: column;
+}
+
+.daxiang-form-modal .daxiang-form-modal__body > .daxiang-form-session {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: 100%;
 }
 </style>

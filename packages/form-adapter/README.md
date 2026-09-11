@@ -15,7 +15,9 @@ const adapters = createDxBpmFormAdapter({
 })
 ```
 
-`createLocalPreviewFormAdapter()` 返回 `{ adapters, dispose }`；其文件只保存在当前页面的内存与 Object URL 中，不会产生业务网络请求。
+`createLocalPreviewFormAdapter()` 返回 `{ adapters, dispose }`；其文件只保存在当前页面的内存与 Object URL 中，不会产生业务网络请求。本地预览会提供 OCR、扫码、定位（含选点）的演示实现，定位结果使用固定 `FormLocationValue`。
+
+生产宿主需要真实地图时，可使用 `createAmapLocationAdapter({ key })`。Key 由调用方传入，SDK 通过动态脚本加载，不增加 npm 依赖。DX BPM 工厂的扫码与定位通过 `extras` 注入，缺少端口时对应控件失败关闭。采集组件的设计配置与取值约定见[采集组件](../../docs/guide/capture.md)。
 
 ## 0.3 关系表单接入
 

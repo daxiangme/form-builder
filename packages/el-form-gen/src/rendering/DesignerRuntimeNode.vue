@@ -1,14 +1,12 @@
 <template>
-  <ElCol
-    v-if="node.nodeType === 'FIELD' && runtimeVisibleField"
-    :span="grid.span"
-    :offset="grid.offset"
-  >
+  <ElCol v-if="node.nodeType === 'FIELD' && runtimeVisibleField" :span="grid.span" :offset="0">
     <DesignerDetailField
       v-if="mode === 'DETAIL'"
       :field="runtimeVisibleField"
       :model-value="valueStore.fields[runtimeVisibleField.id]"
       :show-label="detailShowLabel"
+      :adapters="adapters"
+      :adapter-context="adapterContext"
     />
     <ElFormItem
       v-else
@@ -19,14 +17,28 @@
       @focusin="emitComponentEvent(node.id, 'FOCUS')"
       @focusout="emitComponentEvent(node.id, 'BLUR')"
     >
+      <DesignerDetailField
+        v-if="fieldPresentsAsDetail"
+        compact
+        :field="runtimeVisibleField"
+        :model-value="valueStore.fields[runtimeVisibleField.id]"
+        :show-label="false"
+        :show-help="false"
+        :adapters="adapters"
+        :adapter-context="adapterContext"
+      />
       <DesignerStaticControl
+        v-else
         :model-value="valueStore.fields[runtimeVisibleField.id]"
         :field="runtimeField"
         :mode="mode"
         :appearance-mode="readonlyDisplayMode"
         :adapters="adapters"
         :adapter-context="adapterContext"
+        :field-values="valueStore.fields"
+        :control-radius="appearance.controlRadius"
         @update:model-value="updateFieldValue"
+        @apply-field-assignments="applyFieldAssignments"
         @runtime-warning="(message) => emit('runtime-warning', message)"
       />
       <small v-if="runtimeVisibleField.helpText" class="designer-runtime-node__help">{{
@@ -42,10 +54,13 @@
     v-else-if="
       node.nodeType === 'CONTAINER' &&
       runtimeNodeVisible &&
-      !(mode === 'DETAIL' && node.componentType === 'button')
+      !(
+        (mode === 'DETAIL' || mode === 'READ_ONLY') &&
+        (node.componentType === 'button' || node.componentType === 'captcha')
+      )
     "
     :span="grid.span"
-    :offset="grid.offset"
+    :offset="0"
   >
     <div
       class="designer-runtime-node__surface-host"
@@ -122,32 +137,40 @@
           :name="slot.slotCode"
           :label="slot.label"
         >
-          <ElRow class="designer-runtime-node__grid" :gutter="gutter">
-            <DesignerRuntimeNode
-              v-for="child in slot.children"
-              :key="child.id"
-              :node="child"
-              :fields="fields"
-              :value-store="valueStore"
-              :mode="mode"
-              :device="device"
-              :gutter="gutter"
-              :appearance="appearance"
-              :field-states="fieldStates"
-              :node-states="nodeStates"
-              :field-feedbacks="fieldFeedbacks"
-              :feedback-scope="feedbackScope"
-              :adapters="adapters"
-              :adapter-context="adapterContext"
-              :readonly-display-mode="readonlyDisplayMode"
-              @update-field-value="(fieldId, value) => emit('update-field-value', fieldId, value)"
-              @update-collection="
-                (containerId, rows) => emit('update-collection', containerId, rows)
-              "
-              @component-event="(...args) => emit('component-event', ...args)"
-              @runtime-warning="(message) => emit('runtime-warning', message)"
-            />
-          </ElRow>
+          <DesignerGridFlowRow
+            :nodes="occupyingNodes(slot.children)"
+            :device="device"
+            :gutter="gutter"
+            :row-gap="appearance.rowGap"
+          >
+            <template #default="{ node }">
+              <DesignerRuntimeNode
+                :node="node"
+                :fields="fields"
+                :value-store="valueStore"
+                :mode="mode"
+                :device="device"
+                :gutter="gutter"
+                :appearance="appearance"
+                :field-states="fieldStates"
+                :node-states="nodeStates"
+                :field-feedbacks="fieldFeedbacks"
+                :feedback-scope="feedbackScope"
+                :adapters="adapters"
+                :adapter-context="adapterContext"
+                :readonly-display-mode="readonlyDisplayMode"
+                @update-field-value="(fieldId, value) => emit('update-field-value', fieldId, value)"
+                @apply-field-assignments="
+                  (fieldId, source) => emit('apply-field-assignments', fieldId, source)
+                "
+                @update-collection="
+                  (containerId, rows) => emit('update-collection', containerId, rows)
+                "
+                @component-event="(...args) => emit('component-event', ...args)"
+                @runtime-warning="(message) => emit('runtime-warning', message)"
+              />
+            </template>
+          </DesignerGridFlowRow>
         </ElTabPane>
       </ElTabs>
       <DxFormRowSubtable
@@ -169,8 +192,18 @@
         @update:model-value="updateSubtableRows"
       >
         <template #cell="{ column, value, update, row }">
+          <DesignerDetailField
+            v-if="columnPresentsAsDetail(column)"
+            compact
+            :field="fieldForColumn(column)!"
+            :model-value="value"
+            :show-label="false"
+            :show-help="false"
+            :adapters="adapters"
+            :adapter-context="{ ...adapterContext, rowKey: row.rowId }"
+          />
           <div
-            v-if="fieldForColumn(column)"
+            v-else-if="fieldForColumn(column)"
             @focusin="emitComponentEvent(column.columnId, 'FOCUS', row, node.id)"
             @focusout="emitComponentEvent(column.columnId, 'BLUR', row, node.id)"
           >
@@ -181,7 +214,12 @@
               :appearance-mode="readonlyDisplayMode"
               :adapters="adapters"
               :adapter-context="{ ...adapterContext, rowKey: row.rowId }"
+              :field-values="row.values"
+              :control-radius="appearance.controlRadius"
               @update:model-value="updateSubtableField(column, row, $event, update, node.id)"
+              @apply-field-assignments="
+                (source) => applySubtableFieldAssignments(column, row, source)
+              "
               @runtime-warning="(message) => emit('runtime-warning', message)"
             />
             <small
@@ -206,6 +244,8 @@
             :field="fieldForColumn(column)!"
             :model-value="value"
             :show-label="false"
+            :adapters="adapters"
+            :adapter-context="adapterContext"
           />
           <ElText v-else type="danger">失效字段</ElText>
         </template>
@@ -227,8 +267,18 @@
         @update:model-value="updateSubtableRows"
       >
         <template #field="{ column, value, update, row }">
+          <DesignerDetailField
+            v-if="columnPresentsAsDetail(column)"
+            compact
+            :field="fieldForColumn(column)!"
+            :model-value="value"
+            :show-label="false"
+            :show-help="false"
+            :adapters="adapters"
+            :adapter-context="{ ...adapterContext, rowKey: row.rowId }"
+          />
           <div
-            v-if="fieldForColumn(column)"
+            v-else-if="fieldForColumn(column)"
             @focusin="emitComponentEvent(column.columnId, 'FOCUS', row, node.id)"
             @focusout="emitComponentEvent(column.columnId, 'BLUR', row, node.id)"
           >
@@ -239,7 +289,12 @@
               :appearance-mode="readonlyDisplayMode"
               :adapters="adapters"
               :adapter-context="{ ...adapterContext, rowKey: row.rowId }"
+              :field-values="row.values"
+              :control-radius="appearance.controlRadius"
               @update:model-value="updateSubtableField(column, row, $event, update, node.id)"
+              @apply-field-assignments="
+                (source) => applySubtableFieldAssignments(column, row, source)
+              "
               @runtime-warning="(message) => emit('runtime-warning', message)"
             />
             <small
@@ -264,6 +319,8 @@
             :field="fieldForColumn(column)!"
             :model-value="value"
             :show-label="false"
+            :adapters="adapters"
+            :adapter-context="adapterContext"
           />
           <ElText v-else type="danger">失效字段</ElText>
         </template>
@@ -272,35 +329,42 @@
         <header v-if="containerTitle" class="designer-runtime-node__container-header">
           <strong>{{ containerTitle || componentName }}</strong>
         </header>
-        <ElRow
+        <DesignerGridFlowRow
           v-for="slot in node.slots"
           :key="slot.id"
-          class="designer-runtime-node__grid"
+          :nodes="occupyingNodes(slot.children)"
+          :device="device"
           :gutter="gutter"
+          :row-gap="appearance.rowGap"
         >
-          <DesignerRuntimeNode
-            v-for="child in slot.children"
-            :key="child.id"
-            :node="child"
-            :fields="fields"
-            :value-store="valueStore"
-            :mode="mode"
-            :device="device"
-            :gutter="gutter"
-            :appearance="appearance"
-            :field-states="fieldStates"
-            :node-states="nodeStates"
-            :field-feedbacks="fieldFeedbacks"
-            :feedback-scope="feedbackScope"
-            :adapters="adapters"
-            :adapter-context="adapterContext"
-            :readonly-display-mode="readonlyDisplayMode"
-            @update-field-value="(fieldId, value) => emit('update-field-value', fieldId, value)"
-            @update-collection="(containerId, rows) => emit('update-collection', containerId, rows)"
-            @component-event="(...args) => emit('component-event', ...args)"
-            @runtime-warning="(message) => emit('runtime-warning', message)"
-          />
-        </ElRow>
+          <template #default="{ node }">
+            <DesignerRuntimeNode
+              :node="node"
+              :fields="fields"
+              :value-store="valueStore"
+              :mode="mode"
+              :device="device"
+              :gutter="gutter"
+              :appearance="appearance"
+              :field-states="fieldStates"
+              :node-states="nodeStates"
+              :field-feedbacks="fieldFeedbacks"
+              :feedback-scope="feedbackScope"
+              :adapters="adapters"
+              :adapter-context="adapterContext"
+              :readonly-display-mode="readonlyDisplayMode"
+              @update-field-value="(fieldId, value) => emit('update-field-value', fieldId, value)"
+              @apply-field-assignments="
+                (fieldId, source) => emit('apply-field-assignments', fieldId, source)
+              "
+              @update-collection="
+                (containerId, rows) => emit('update-collection', containerId, rows)
+              "
+              @component-event="(...args) => emit('component-event', ...args)"
+              @runtime-warning="(message) => emit('runtime-warning', message)"
+            />
+          </template>
+        </DesignerGridFlowRow>
         <ElEmpty
           v-if="node.slots.every((slot) => slot.children.length === 0)"
           description="暂无内容"
@@ -320,7 +384,11 @@ import {
   resolveDesignerContainerAppearance,
 } from '@daxiangme/form-core'
 import { createDesignerFieldFeedbackKey } from '@daxiangme/form-core'
-import { isDesignerFieldUserWritable, isDesignerRuntimeWriteBlocked } from '@daxiangme/form-core'
+import {
+  isDesignerFieldDetailPresentation,
+  isDesignerFieldUserWritable,
+  isDesignerRuntimeWriteBlocked,
+} from '@daxiangme/form-core'
 import { projectDesignerSubtableColumns } from '@daxiangme/form-core'
 import type {
   DesignerAppearance,
@@ -341,7 +409,9 @@ import type {
 import DxFormBlockSubtable from '../form/controls/DxFormBlockSubtable.vue'
 import DxFormRowSubtable from '../form/controls/DxFormRowSubtable.vue'
 import DesignerDetailField from './DesignerDetailField.vue'
+import DesignerGridFlowRow from './DesignerGridFlowRow.vue'
 import DesignerStaticControl from './DesignerStaticControl.vue'
+import { designerLayoutNodeOccupiesRuntimeGrid } from './runtime-grid'
 
 defineOptions({ name: 'DesignerRuntimeNode' })
 
@@ -364,6 +434,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'update-field-value': [fieldId: string, value: unknown]
+  'apply-field-assignments': [sourceFieldId: string, source: Record<string, unknown>]
   'update-collection': [containerId: string, rows: DesignerSubtableRow[]]
   'component-event': [
     nodeId: string,
@@ -423,9 +494,26 @@ const runtimeFieldState = computed<DesignerResolvedFieldState>(() =>
       })
     : { visible: false, required: false, disabled: false },
 )
+/** 新增/编辑下宿主字段权限只读时，在表单骨架内展示详情内容。 */
+const fieldPresentsAsDetail = computed(() =>
+  isDesignerFieldDetailPresentation({
+    mode: props.mode,
+    accessLevel: runtimeFieldState.value.accessLevel,
+  }),
+)
 const runtimeNodeVisible = computed(
   () => props.node.nodeType !== 'CONTAINER' || props.nodeStates?.[props.node.id]?.visible !== false,
 )
+function occupyingNodes(nodes: DesignerLayoutNode[]): DesignerLayoutNode[] {
+  return nodes.filter((item) =>
+    designerLayoutNodeOccupiesRuntimeGrid(item, {
+      mode: props.mode,
+      fields: props.fields,
+      fieldStates: props.fieldStates,
+      nodeStates: props.nodeStates,
+    }),
+  )
+}
 const runtimeField = computed<DesignerField>(() => ({
   ...runtimeVisibleField.value!,
   required: runtimeFieldState.value.required,
@@ -567,6 +655,19 @@ function updateFieldValue(value: unknown): void {
   }
 }
 
+function applyFieldAssignments(source: Record<string, unknown>): void {
+  if (field.value) emit('apply-field-assignments', field.value.id, source)
+}
+
+function applySubtableFieldAssignments(
+  column: DesignerSubtableColumn,
+  row: DesignerSubtableRow,
+  source: Record<string, unknown>,
+): void {
+  emit('apply-field-assignments', column.fieldId, source)
+  emitComponentEvent(column.columnId, 'CHANGE', row, props.node.id)
+}
+
 /** 将子表领域组件产生的多行值回传给运行值仓库。 */
 function updateSubtableRows(rows: DesignerSubtableRow[]): void {
   if (container.value) emit('update-collection', container.value.id, rows)
@@ -589,6 +690,17 @@ function booleanConfiguration(key: string): boolean {
 /** 返回稳定列投影对应的字段定义。 */
 function fieldForColumn(column: DesignerSubtableColumn): DesignerField | undefined {
   return props.fields.find((item) => item.id === column.fieldId)
+}
+
+/** 新增/编辑下宿主列权限只读时，子表单元格展示详情而不是禁用控件。 */
+function columnPresentsAsDetail(column: DesignerSubtableColumn): boolean {
+  return Boolean(
+    fieldForColumn(column) &&
+    isDesignerFieldDetailPresentation({
+      mode: props.mode,
+      accessLevel: props.fieldStates[column.fieldId]?.accessLevel,
+    }),
+  )
 }
 
 function runtimeSubtableField(column: DesignerSubtableColumn): DesignerField {

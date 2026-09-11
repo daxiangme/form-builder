@@ -1,13 +1,12 @@
 <template>
   <section class="daxiang-form form-designer-core">
     <DesignerCommandBar
-      :document-name="engine.document.value.name"
-      :dirty="engine.dirty.value"
       :can-undo="engine.canUndo.value"
       :can-redo="engine.canRedo.value"
       :viewport="viewport"
       :zoom="zoom"
       :grid-visible="gridVisible"
+      :density="commandBarDensity"
       @update:viewport="viewport = $event"
       @update:zoom="zoom = clampZoom($event)"
       @toggle-grid="gridVisible = !gridVisible"
@@ -24,7 +23,13 @@
       @preview="openPreview"
       @save="emit('save-request', currentDocument())"
     >
-      <template #leading><slot name="header-leading" /></template>
+      <template v-if="$slots['header-leading']" #leading>
+        <slot
+          name="header-leading"
+          :document-name="engine.document.value.name"
+          :dirty="engine.dirty.value"
+        />
+      </template>
     </DesignerCommandBar>
 
     <div ref="workspaceRef" class="form-designer-core__workspace" :style="workspaceStyle">
@@ -156,6 +161,7 @@
           :selected-node="selectedNode"
           :selected-field="selectedField"
           :active-module="activeModule"
+          :catalogs="catalogs"
           @update-document="updateDocument"
           @update-appearance="updateAppearance"
           @update-field="updateField"
@@ -222,6 +228,7 @@
       v-model="previewVisible"
       :title="previewTitle"
       width="min(1120px, calc(100vw - 32px))"
+      :radius="previewDocument.appearance.controlRadius"
       :show-footer="false"
       :flush-content-vertical="true"
     >
@@ -293,6 +300,7 @@
     <DesignerSchemaInspector
       v-model="schemaVisible"
       :document="engine.document.value"
+      :catalogs="catalogs"
       @import="replaceDocument($event, true)"
     />
   </section>
@@ -401,9 +409,20 @@ import DesignerSchemaInspector from './workbench/DesignerSchemaInspector.vue'
 
 defineOptions({ name: 'ElFormDesigner' })
 
+defineSlots<{
+  /**
+   * 顶栏左侧宿主区。默认空白，不渲染文档标题。
+   * 可放入返回按钮、标题等；窄屏收纳预览、保存等设计器按钮时仍保留。
+   */
+  'header-leading'?: (props: { documentName: string; dirty: boolean }) => unknown
+}>()
+
 const props = defineProps<{
   modelValue: DesignerDocument
   initialDataModel?: DesignerInitialDataModel
+  /**
+   * 设计器纯数据目录。组件可用性只认 `components` 三态；`capabilities` 已废弃。
+   */
   catalogs?: FormDesignerCatalogs
   adapters?: DesignerRuntimeAdapters
   adapterContext?: FormRuntimeAdapterContext
@@ -437,14 +456,39 @@ const leftWidth = ref(initialPreferences.leftWidth)
 const rightWidth = ref(initialPreferences.rightWidth)
 const workspaceRef = ref<HTMLElement>()
 const workspaceWidth = ref(0)
-const autoCollapseLeft = computed(
-  () => workspaceWidth.value > 0 && workspaceWidth.value < leftWidth.value + rightWidth.value + 620,
-)
+/** 左右图标轨固定占位，收起侧栏后仍保留。 */
+const DESIGNER_RAIL_SIZE = 44
+/** 侧栏打开时，画布至少需要的剩余宽度。 */
+const DESIGNER_MIN_CANVAS_BESIDE_PANEL = 640
+/** 仅保留轨宽时，画布至少需要的剩余宽度。 */
+const DESIGNER_MIN_CANVAS_WITH_RAILS = 560
+const leftForceOpen = ref(false)
+const rightForceOpen = ref(false)
 const autoCollapseRight = computed(
-  () => workspaceWidth.value > 0 && workspaceWidth.value < rightWidth.value + 620,
+  () =>
+    workspaceWidth.value > 0 &&
+    workspaceWidth.value <
+      rightWidth.value + DESIGNER_RAIL_SIZE * 2 + DESIGNER_MIN_CANVAS_BESIDE_PANEL,
 )
-const leftCollapsed = computed(() => leftManualCollapsed.value || autoCollapseLeft.value)
-const rightCollapsed = computed(() => rightManualCollapsed.value || autoCollapseRight.value)
+const rightCollapsed = computed(
+  () => rightManualCollapsed.value || (autoCollapseRight.value && !rightForceOpen.value),
+)
+const autoCollapseLeft = computed(() => {
+  if (workspaceWidth.value <= 0) return false
+  const rightTaken = rightCollapsed.value ? 0 : rightWidth.value + 6
+  return (
+    workspaceWidth.value <
+    leftWidth.value + DESIGNER_RAIL_SIZE * 2 + rightTaken + DESIGNER_MIN_CANVAS_WITH_RAILS
+  )
+})
+const leftCollapsed = computed(
+  () => leftManualCollapsed.value || (autoCollapseLeft.value && !leftForceOpen.value),
+)
+const commandBarDensity = computed<'full' | 'compact' | 'minimal'>(() => {
+  if (workspaceWidth.value > 0 && workspaceWidth.value < 880) return 'minimal'
+  if (workspaceWidth.value > 0 && workspaceWidth.value < 1180) return 'compact'
+  return 'full'
+})
 const workspaceStyle = computed(() => ({
   gridTemplateColumns: [
     '44px',
@@ -575,7 +619,7 @@ watch(
   (document) => {
     const next = cloneDesignerDocument(document)
     emit('update:modelValue', next)
-    emit('diagnostics', [...initializationDiagnostics.value, ...diagnoseDesignerDocument(next)])
+    emit('diagnostics', collectDocumentDiagnostics(next))
   },
   { deep: true },
 )
@@ -583,6 +627,13 @@ watch(
   () => engine.dirty.value,
   (dirty) => emit('dirty-change', dirty),
   { immediate: true },
+)
+watch(
+  () => props.catalogs,
+  () => {
+    emit('diagnostics', collectDocumentDiagnostics(currentDocument()))
+  },
+  { deep: true },
 )
 watch(
   [leftManualCollapsed, rightManualCollapsed, leftWidth, rightWidth, gridVisible, viewport],
@@ -598,6 +649,12 @@ watch(
     })
   },
 )
+watch(autoCollapseLeft, (auto) => {
+  if (!auto) leftForceOpen.value = false
+})
+watch(autoCollapseRight, (auto) => {
+  if (!auto) rightForceOpen.value = false
+})
 onMounted(() => {
   window.addEventListener('keydown', handleShortcut)
   workspaceResizeObserver = new ResizeObserver(() => {
@@ -606,10 +663,7 @@ onMounted(() => {
   if (workspaceRef.value) workspaceResizeObserver.observe(workspaceRef.value)
   workspaceWidth.value = workspaceRef.value?.clientWidth ?? 0
   emit('update:modelValue', currentDocument())
-  emit('diagnostics', [
-    ...initializationDiagnostics.value,
-    ...diagnoseDesignerDocument(currentDocument()),
-  ])
+  emit('diagnostics', collectDocumentDiagnostics(currentDocument()))
 })
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleShortcut)
@@ -619,6 +673,14 @@ onBeforeUnmount(() => {
 /** 返回与 Vue 代理隔离的当前文档。 */
 function currentDocument(): DesignerDocument {
   return cloneDesignerDocument(engine.document.value)
+}
+
+/** 合并初始化诊断与当前目录解析后的文档诊断。 */
+function collectDocumentDiagnostics(document: DesignerDocument) {
+  return [
+    ...initializationDiagnostics.value,
+    ...diagnoseDesignerDocument(document, {}, props.catalogs),
+  ]
 }
 
 /** 替换文档时重新执行一次性参数判定，并刷新只读来源索引。 */
@@ -651,7 +713,12 @@ function addComponentAt(componentType: string, target: DesignerDropTarget): void
     ElMessage.warning(registration.unavailableReason)
     return
   }
-  const rejection = designerComponentDropRejection(canvasDocument.value, componentType, target)
+  const rejection = designerComponentDropRejection(
+    canvasDocument.value,
+    componentType,
+    target,
+    props.catalogs,
+  )
   if (rejection) {
     ElMessage.warning(rejection)
     return
@@ -1294,30 +1361,36 @@ function synchronizeModuleActionReferences(
 function openLeftPanel(tab: (typeof leftRailItems)[number]['name']): void {
   leftTab.value = tab
   leftManualCollapsed.value = false
+  if (autoCollapseLeft.value) leftForceOpen.value = true
 }
 
 function openRightPanel(tab: 'component' | 'form'): void {
   rightTab.value = tab
   rightManualCollapsed.value = false
+  if (autoCollapseRight.value) rightForceOpen.value = true
 }
 
 async function toggleLeftPanel(): Promise<void> {
   const position = canvasRef.value?.captureViewport()
-  if (autoCollapseLeft.value && !leftManualCollapsed.value) {
-    ElMessage.info('当前宽度不足，左侧栏会保持自动收起')
-    return
+  if (leftCollapsed.value) {
+    leftManualCollapsed.value = false
+    if (autoCollapseLeft.value) leftForceOpen.value = true
+  } else {
+    leftForceOpen.value = false
+    leftManualCollapsed.value = true
   }
-  leftManualCollapsed.value = !leftManualCollapsed.value
   await restoreCanvasViewportAfterLayout(position, true)
 }
 
 async function toggleRightPanel(): Promise<void> {
   const position = canvasRef.value?.captureViewport()
-  if (autoCollapseRight.value && !rightManualCollapsed.value) {
-    ElMessage.info('当前宽度不足，右侧栏会保持自动收起')
-    return
+  if (rightCollapsed.value) {
+    rightManualCollapsed.value = false
+    if (autoCollapseRight.value) rightForceOpen.value = true
+  } else {
+    rightForceOpen.value = false
+    rightManualCollapsed.value = true
   }
-  rightManualCollapsed.value = !rightManualCollapsed.value
   await restoreCanvasViewportAfterLayout(position, true)
 }
 
@@ -1635,6 +1708,8 @@ defineExpose({
   flex-direction: column;
   overflow: hidden;
   background: var(--el-bg-color);
+  container-type: inline-size;
+  container-name: daxiang-designer;
 }
 
 .form-designer-core__workspace {

@@ -1,5 +1,5 @@
 <template>
-  <div class="designer-signature-field" :class="{ 'is-disabled': disabled }">
+  <div ref="rootRef" class="designer-signature-field" :class="{ 'is-disabled': disabled }">
     <canvas
       ref="canvasRef"
       class="designer-signature-field__canvas"
@@ -8,39 +8,57 @@
       @pointermove="continueStroke"
       @pointerup="endStroke"
       @pointerleave="endStroke"
+      @pointercancel="endStroke"
     />
     <div class="designer-signature-field__actions">
-      <span>{{ disabled ? '运行预览中可手写签名' : '请在上方区域签名' }}</span>
+      <span>请在上方区域签名</span>
       <ElButton v-if="!disabled" link @click="clearCanvas">清空</ElButton>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted } from 'vue'
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+
 defineOptions({ name: 'DesignerSignatureField' })
 
 const props = withDefaults(
   defineProps<{
+    /** 禁用手写；弹窗内始终可写，表单回显不再内嵌本画板。 */
     disabled?: boolean
+    /** 画笔宽度，像素。 */
     lineWidth?: number
+    /** 画笔颜色。 */
     penColor?: string
+    /** 当前草稿值；仅 `data:` / http(s) / blob 会还原到画布。 */
     modelValue?: string
+    /** 优先于字段值的预览地址。 */
+    previewSrc?: string
   }>(),
-  { disabled: false, lineWidth: 2, penColor: '#111827', modelValue: '' },
+  { disabled: false, lineWidth: 2, penColor: '#111827', modelValue: '', previewSrc: '' },
 )
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
 
+const rootRef = ref<HTMLElement>()
 const canvasRef = ref<HTMLCanvasElement>()
 let drawing = false
+let observer: ResizeObserver | undefined
+let sized = false
 
 onMounted(() => {
+  observer = new ResizeObserver(() => resizeCanvas())
+  if (rootRef.value) observer.observe(rootRef.value)
+  if (canvasRef.value) observer.observe(canvasRef.value)
   resizeCanvas()
-  restoreImage(props.modelValue)
 })
+
+onBeforeUnmount(() => {
+  observer?.disconnect()
+})
+
 watch(
-  () => props.modelValue,
-  (value) => restoreImage(value),
+  () => [props.modelValue, props.previewSrc],
+  () => restoreImage(drawableSource()),
 )
 
 /** 开始一段本地签名笔画，不产生文件上传或远程请求。 */
@@ -85,11 +103,15 @@ function resizeCanvas(): void {
   const canvas = canvasRef.value
   if (!canvas) return
   const rect = canvas.getBoundingClientRect()
+  if (rect.width < 2 || rect.height < 2) return
+  const snapshot = sized && canvas.width > 1 ? canvas.toDataURL('image/png') : drawableSource()
   const ratio = window.devicePixelRatio || 1
   canvas.width = Math.max(1, Math.round(rect.width * ratio))
   canvas.height = Math.max(1, Math.round(rect.height * ratio))
   const context = canvas.getContext('2d')
-  context?.scale(ratio, ratio)
+  context?.setTransform(ratio, 0, 0, ratio, 0, 0)
+  sized = true
+  restoreImage(isDrawableSrc(snapshot) ? snapshot : drawableSource())
 }
 
 function drawingContext(): CanvasRenderingContext2D | null {
@@ -107,15 +129,29 @@ function canvasPoint(event: PointerEvent): { x: number; y: number } {
   return { x: event.clientX - (rect?.left ?? 0), y: event.clientY - (rect?.top ?? 0) }
 }
 
+function drawableSource(): string {
+  const preview = props.previewSrc.trim()
+  if (isDrawableSrc(preview)) return preview
+  const value = props.modelValue.trim()
+  return isDrawableSrc(value) ? value : ''
+}
+
+function isDrawableSrc(value: string): boolean {
+  return value.startsWith('data:image/') || /^(https?:|blob:)/i.test(value)
+}
+
 /** 将预览会话内的签名数据还原到画布，不读取远程资源。 */
 function restoreImage(value: string): void {
   const canvas = canvasRef.value
   const context = canvas?.getContext('2d')
   if (!canvas || !context) return
   context.clearRect(0, 0, canvas.width, canvas.height)
-  if (!value.startsWith('data:image/')) return
+  if (!value || !isDrawableSrc(value)) return
   const image = new Image()
-  image.onload = () => context.drawImage(image, 0, 0, canvas.clientWidth, canvas.clientHeight)
+  image.onload = () => {
+    if (canvasRef.value !== canvas) return
+    context.drawImage(image, 0, 0, canvas.clientWidth, canvas.clientHeight)
+  }
   image.src = value
 }
 </script>
@@ -131,7 +167,7 @@ function restoreImage(value: string): void {
 .designer-signature-field__canvas {
   display: block;
   width: 100%;
-  height: 140px;
+  height: min(50vh, 280px);
   cursor: crosshair;
   touch-action: none;
 }

@@ -42,6 +42,13 @@
             show-icon
             :title="registration.unavailableReason"
           />
+          <ElAlert
+            v-if="registration.hostSetupHint"
+            type="info"
+            :closable="false"
+            show-icon
+            :title="registration.hostSetupHint"
+          />
 
           <ElCollapse v-model="openedSections">
             <ElCollapseItem
@@ -329,6 +336,7 @@
                     :definition="definition"
                     :model-value="configurationValue(definition.key)"
                     :configuration="selectedConfiguration"
+                    :field-candidates="assignmentFieldCandidates"
                     @update:model-value="updateConfiguration(definition.key, $event)"
                   />
                   <small v-if="definition.description">{{ definition.description }}</small>
@@ -375,6 +383,9 @@
                           :configuration="{ ...selectedNode.layout[deviceName] }"
                           @update:model-value="updateGrid(deviceName, 'offset', Number($event))"
                         />
+                        <small class="designer-inspector__hint"
+                          >当前行放不下偏移加跨度时，换到下一行并从左侧顶格排列。</small
+                        >
                       </ElFormItem>
                     </div>
                     <ElFormItem :label="layoutShowLabelText">
@@ -467,9 +478,7 @@
                 :model-value="activeModule.radius ?? 'THEME'"
                 @update:model-value="updateModuleRadius(activeModule.code, $event)"
               />
-              <small
-                >跟随系统时消费宿主 --el-border-radius-base；自定义值须为 0～32 的 4 的倍数。</small
-              >
+              <small>跟随系统时弹窗外壳为 16px；自定义值须为 0～32 的 4 的倍数。</small>
             </ElFormItem>
             <ElFormItem v-if="activeModule.kind === 'DIALOG'" label="运行最大高度">
               <ElSelect
@@ -605,6 +614,9 @@
                 :model-value="document.appearance.readonlyDisplayMode"
                 @update:model-value="updateAppearance('readonlyDisplayMode', $event)"
               />
+              <small v-if="appearanceDefinitions.readonlyDisplayMode.description">{{
+                appearanceDefinitions.readonlyDisplayMode.description
+              }}</small>
             </ElFormItem>
             <ElFormItem label="默认占位提示">
               <ElInput
@@ -689,6 +701,9 @@
                 </ElSelect>
               </ElFormItem>
             </div>
+            <small class="designer-inspector__hint">
+              设计画布会按位置和对齐预览动作栏；运行预览同样生效。
+            </small>
             <div class="designer-inspector__action-buttons">
               <ElCheckbox
                 v-for="button in document.actionBar.buttons"
@@ -700,15 +715,15 @@
             </div>
             <ElDivider content-position="left">全局高级能力</ElDivider>
             <div class="designer-inspector__global-actions">
-              <ElButton plain @click="emit('open-event-editor')"
-                ><DxSvgIcon icon="ri:flashlight-line" />表单事件</ElButton
-              >
-              <ElButton plain @click="emit('open-global-advanced')"
-                ><DxSvgIcon icon="ri:database-2-line" />变量 / 数据源 / 国际化</ElButton
-              >
-              <ElButton plain @click="emit('open-schema')"
-                ><DxSvgIcon icon="ri:code-s-slash-line" />Schema 工具</ElButton
-              >
+              <FormButton plain icon="ri:flashlight-line" @click="emit('open-event-editor')">
+                表单事件
+              </FormButton>
+              <FormButton plain icon="ri:database-2-line" @click="emit('open-global-advanced')">
+                变量 / 数据源 / 国际化
+              </FormButton>
+              <FormButton plain icon="ri:code-s-slash-line" @click="emit('open-schema')">
+                Schema 工具
+              </FormButton>
             </div>
           </ElForm>
         </div>
@@ -742,7 +757,8 @@
 import { computed, ref, watch, nextTick } from 'vue'
 import DModal from '../infrastructure/FormModalShell.vue'
 import DxSvgIcon from '../infrastructure/FormIcon.vue'
-import { compatibleDesignerComponents, findDesignerComponent } from '@daxiangme/form-core'
+import FormButton from '../infrastructure/FormButton.vue'
+import { compatibleDesignerComponents, findDesignerCatalogComponent } from '@daxiangme/form-core'
 import {
   countDesignerSurfaceContainers,
   designerContainerAppearanceClasses,
@@ -767,6 +783,7 @@ import type {
   DesignerOverlayModule,
   DesignerPropertyDefinition,
   DesignerRadiusValue,
+  FormDesignerCatalogs,
   DesignerRelationPatch,
   DesignerRootEntityPatch,
 } from '@daxiangme/form-core'
@@ -781,6 +798,7 @@ const props = defineProps<{
   selectedNode?: DesignerLayoutNode
   selectedField?: DesignerField
   activeModule?: DesignerOverlayModule
+  catalogs?: FormDesignerCatalogs
   activeTab?: 'component' | 'form'
 }>()
 const emit = defineEmits<{
@@ -899,16 +917,22 @@ const appearanceDefinitions = {
       { label: '大', value: 'LARGE' },
     ],
   }),
-  readonlyDisplayMode: propertyDefinition('readonlyDisplayMode', '只读展示', {
-    type: 'SELECT',
-    options: [
-      { label: '禁用控件', value: 'CONTROL' },
-      { label: '纯文本', value: 'TEXT' },
-    ],
-  }),
-  controlRadius: propertyDefinition('controlRadius', '控件圆角', {
-    type: 'RADIUS',
-  }),
+  readonlyDisplayMode: {
+    ...propertyDefinition('readonlyDisplayMode', '只读展示', {
+      type: 'SELECT',
+      options: [
+        { label: '禁用控件', value: 'CONTROL' },
+        { label: '纯文本', value: 'TEXT' },
+      ],
+    }),
+    description: '仅整表只读模式生效。宿主字段权限只读始终按详情内容展示。',
+  },
+  controlRadius: {
+    ...propertyDefinition('controlRadius', '控件圆角', {
+      type: 'RADIUS',
+    }),
+    description: '运行弹窗外壳默认 16px；填写自定义像素时与全局圆角一致。',
+  },
   containerStyle: propertyDefinition('containerStyle', '默认容器样式', {
     type: 'SEGMENTED',
     options: [
@@ -930,22 +954,35 @@ const gridOffsetDefinition = propertyDefinition('offset', '偏移', {
   legacyValuePolicy: 'PRESERVE',
 })
 const registration = computed<DesignerComponentRegistration | undefined>(() => {
-  if (props.selectedField) return findDesignerComponent(props.selectedField.componentType)
-  if (props.selectedNode?.nodeType === 'CONTAINER')
-    return findDesignerComponent(props.selectedNode.componentType)
-  return undefined
+  const componentType = props.selectedField
+    ? props.selectedField.componentType
+    : props.selectedNode?.nodeType === 'CONTAINER'
+      ? props.selectedNode.componentType
+      : undefined
+  return componentType ? findDesignerCatalogComponent(componentType, props.catalogs) : undefined
 })
 const selectedContainer = computed(() =>
   props.selectedNode?.nodeType === 'CONTAINER' ? props.selectedNode : undefined,
 )
 const compatibleComponents = computed(() =>
-  props.selectedField ? compatibleDesignerComponents(props.selectedField.semanticType) : [],
+  props.selectedField
+    ? compatibleDesignerComponents(props.selectedField.semanticType).map(
+        (item) => findDesignerCatalogComponent(item.componentType, props.catalogs) ?? item,
+      )
+    : [],
 )
 const selectedConfiguration = computed(
   () =>
     props.selectedField?.configuration ??
     (props.selectedNode?.nodeType === 'CONTAINER' ? props.selectedNode.configuration : {}),
 )
+const assignmentFieldCandidates = computed(() => {
+  const current = props.selectedField
+  if (!current) return []
+  return props.document.dataSchema.fields
+    .filter((field) => field.id !== current.id && field.entityCode === current.entityCode)
+    .map((field) => ({ id: field.id, label: `${field.label} · ${field.key}` }))
+})
 const selectedRelation = computed<DesignerRelation | undefined>(() => {
   const node = props.selectedNode
   if (
@@ -1396,6 +1433,14 @@ async function jumpToSection(name: string): Promise<void> {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--daxiang-form-space-2);
+}
+
+.designer-inspector__hint {
+  display: block;
+  margin-top: var(--daxiang-form-space-1);
+  color: var(--el-text-color-secondary);
+  font-size: 11px;
+  line-height: 1.4;
 }
 
 .designer-inspector__device-grid > strong {

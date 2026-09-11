@@ -38,6 +38,19 @@
             @select-frame="emit('select', '')"
           >
             <div class="designer-canvas__root-editor" @click.self="emit('select', '')">
+              <div
+                v-if="showCanvasActionBar('TOP')"
+                class="designer-canvas__actions"
+                :class="canvasActionAlignClass"
+              >
+                <ElButton
+                  v-for="button in canvasActionButtons"
+                  :key="button.action"
+                  :type="button.action === 'SUBMIT' ? 'primary' : 'default'"
+                  @click.stop.prevent
+                  >{{ button.label }}</ElButton
+                >
+              </div>
               <VueDraggable
                 v-if="document.uiSchema.root.length > 0"
                 class="designer-canvas__node-list"
@@ -93,6 +106,19 @@
                   @drag-end="handleNodeDragEnd"
                 />
               </VueDraggable>
+              <div
+                v-if="showCanvasActionBar('BOTTOM')"
+                class="designer-canvas__actions"
+                :class="canvasActionAlignClass"
+              >
+                <ElButton
+                  v-for="button in canvasActionButtons"
+                  :key="button.action"
+                  :type="button.action === 'SUBMIT' ? 'primary' : 'default'"
+                  @click.stop.prevent
+                  >{{ button.label }}</ElButton
+                >
+              </div>
               <DesignerDropZone
                 class="designer-canvas__tail-drop-zone"
                 :class="{ 'is-empty': document.uiSchema.root.length === 0 }"
@@ -199,6 +225,18 @@ const emptyDropLabel = computed(() => {
   if (props.document.uiSchema.root.length > 0) return '拖放到末尾'
   return props.activeModule ? '拖放组件到模块内容区' : '拖放组件到表单内容区'
 })
+const canvasActionButtons = computed(() =>
+  props.document.actionBar.buttons.filter((button) => button.enabled),
+)
+const canvasActionAlignClass = computed(
+  () => `is-align-${props.document.actionBar.align.toLowerCase()}`,
+)
+function showCanvasActionBar(position: 'TOP' | 'BOTTOM'): boolean {
+  const bar = props.document.actionBar
+  return (
+    !props.activeModule && bar.visible && (bar.position === position || bar.position === 'BOTH')
+  )
+}
 const formLabelPosition = computed(() => props.document.appearance.labelPosition)
 const elementLabelPosition = computed(() => {
   const position = props.document.appearance.labelPosition.toLowerCase()
@@ -700,6 +738,26 @@ defineExpose({ fitToWidth, captureViewport, restoreViewport })
   min-height: 0;
   flex: 1 1 0;
   flex-direction: column;
+}
+
+.designer-canvas__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex: 0 0 auto;
+  margin-block: 8px;
+}
+
+.designer-canvas__actions.is-align-left {
+  justify-content: flex-start;
+}
+
+.designer-canvas__actions.is-align-center {
+  justify-content: center;
+}
+
+.designer-canvas__actions.is-align-right {
+  justify-content: flex-end;
 }
 
 .designer-canvas__node-list {

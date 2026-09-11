@@ -1,4 +1,5 @@
 import { decodeDesignerDocument } from './designer-document'
+import { parseDesignerFieldAssignments } from './field-assignment'
 import { executeDesignerEventFlow } from './event-flow'
 import {
   evaluateDesignerCondition,
@@ -759,6 +760,74 @@ function createSession(
       changedFieldAddresses.add(createDesignerRuntimeFeedbackKey(rowKey, fieldId))
     }
     delete feedbacks[createDesignerRuntimeFeedbackKey(rowKey, fieldId)]
+  }
+
+  async function applyFieldAssignments(
+    rowKey: string,
+    sourceFieldId: string,
+    source: Record<string, unknown>,
+  ): Promise<DesignerRuntimeIssue[]> {
+    const sourceField = fields.get(sourceFieldId)
+    if (!sourceField)
+      failRuntime('FIELD_MISSING', '字段定义不存在', { rowKey, fieldId: sourceFieldId })
+    const mappings = parseDesignerFieldAssignments(sourceField.configuration.fieldMappings)
+    const confirm = sourceField.configuration.confirmOverwriteOnAssignment !== false
+    const skipped: DesignerRuntimeIssue[] = []
+    const item = address(rowKey)
+    for (const mapping of mappings) {
+      const target = fields.get(mapping.targetFieldId)
+      if (!target) {
+        skipped.push({
+          code: 'FIELD_ASSIGNMENT_SKIPPED',
+          message: '回填目标字段不存在，已跳过',
+          rowKey,
+          fieldId: mapping.targetFieldId,
+        })
+        continue
+      }
+      const state = readFieldState(rowKey, target.id, true)
+      if (state.accessLevel !== 'EDITABLE' || state.disabled || !state.visible) {
+        skipped.push({
+          code: 'FIELD_ASSIGNMENT_SKIPPED',
+          message: `字段“${target.label}”当前不可编辑，回填已跳过`,
+          rowKey,
+          fieldId: target.id,
+        })
+        continue
+      }
+      if (target.behavior.valueRules.some((rule) => rule.mode === 'FORMULA')) {
+        skipped.push({
+          code: 'FIELD_ASSIGNMENT_SKIPPED',
+          message: `字段“${target.label}”由公式计算，回填已跳过`,
+          rowKey,
+          fieldId: target.id,
+        })
+        continue
+      }
+      const next = cloneRuntime(source[mapping.sourceKey])
+      const current = rawField(item, target.id)
+      if (runtimeValuesEqual(next, current)) continue
+      if (confirm && current !== undefined && current !== null && current !== '') {
+        if (!adapters.linkageConfirmation) {
+          skipped.push({
+            code: 'FIELD_ASSIGNMENT_SKIPPED',
+            message: `字段“${target.label}”已有值且宿主未提供覆盖确认，回填已跳过`,
+            rowKey,
+            fieldId: target.id,
+          })
+          continue
+        }
+        const accepted = await adapters.linkageConfirmation.confirmOverwrite({
+          fieldId: target.id,
+          fieldLabel: target.label,
+          currentValue: cloneRuntime(current),
+          nextValue: next,
+        })
+        if (!accepted) continue
+      }
+      setField(rowKey, target.id, next)
+    }
+    return skipped
   }
 
   function addRow(
@@ -2232,6 +2301,12 @@ function createSession(
         item.row.values[command.fieldId] = cloneRuntime(clean?.row.values[command.fieldId])
       }
     }
+    if (command.type === 'APPLY_FIELD_ASSIGNMENTS') {
+      result = {
+        ...result,
+        issues: await applyFieldAssignments(command.rowKey, command.sourceFieldId, command.source),
+      }
+    }
     if (command.type === 'CREATE_ROW')
       result = { ...result, rowKey: addRow(command.scope, command.values) }
     if (command.type === 'COPY_ROW') result = { ...result, rowKey: await copyRow(command.rowKey) }
@@ -2257,6 +2332,7 @@ function createSession(
     if (
       [
         'SET_FIELD',
+        'APPLY_FIELD_ASSIGNMENTS',
         'CREATE_ROW',
         'COPY_ROW',
         'LINK',
@@ -2532,6 +2608,7 @@ function intersectFieldPolicy(
       : levels.includes('READ_ONLY')
         ? 'READ_ONLY'
         : 'EDITABLE',
+    required: left?.required === true || right?.required === true ? true : undefined,
   }
 }
 

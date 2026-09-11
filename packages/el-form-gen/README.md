@@ -88,6 +88,62 @@ function handleSave(nextDocument: DesignerDocument) {
 
 `ElFormDesigner` 使用受控 `modelValue`，负责编辑文档并发出保存、导出与诊断事件；业务持久化由宿主决定。
 
+## 设计器插槽
+
+`ElFormDesigner` 目前只有一个插槽：`header-leading`，位于顶栏最左侧。
+
+默认不渲染文档标题或返回按钮。宿主不传时左侧为空白；传入后无论顶栏如何收纳预览、保存等内置按钮，这块区域都会保留，适合放返回、页面标题或宿主自己的操作。
+
+作用域参数：
+
+- `documentName`：当前设计文档名称。
+- `dirty`：是否有未保存修改。
+
+```vue
+<ElFormDesigner v-model="document" @save-request="handleSave">
+  <template #header-leading="{ documentName, dirty }">
+    <ElButton @click="goBack">返回</ElButton>
+    <span>{{ documentName }}</span>
+  </template>
+</ElFormDesigner>
+```
+
+## 设计器组件目录
+
+`ElFormDesigner` 的 `catalogs.components` 是组件可用性的唯一真源。把服务端三态原样写入即可，不要把 `CONDITIONAL` 猜成 `capabilities` 布尔值，也不要维护 `scan` 对 `scan-code` 这类对照表。
+
+- `AVAILABLE`：设计态可选，不展示原因。
+- `CONDITIONAL`：设计态可选，必须展示 `unavailableReason`；不阻止保存。运行期是否可用由 Adapter、权限或设备决定。
+- `UNAVAILABLE`：设计态不可选；画布已有节点保留并告警。
+
+传入非空 `components` 时，未列出的内置组件会变为 `UNAVAILABLE`。覆盖个别组件时，请先从内置目录复制其余项：
+
+```ts
+import {
+  ElFormDesigner,
+  resolveDesignerCatalogComponents,
+  type FormDesignerCatalogs,
+} from 'el-form-gen'
+
+const catalogs: FormDesignerCatalogs = {
+  components: resolveDesignerCatalogComponents().components.map((item) =>
+    item.componentType === 'scan-code'
+      ? {
+          componentType: 'scan-code',
+          availability: 'CONDITIONAL',
+          unavailableReason: '需要 BarcodeDetector 支持',
+        }
+      : {
+          componentType: item.componentType,
+          availability: item.availability,
+          unavailableReason: item.unavailableReason || undefined,
+        },
+  ),
+}
+```
+
+`catalogs.capabilities` 已废弃：重叠键仅为兼容收紧（`false` 仍会收成 `CONDITIONAL` 并覆盖原因）；`remoteValidation`、`dataSource`、`dateRange` 不会影响组件目录，请改用 `adapters`。
+
 ## 渲染表单
 
 推荐用 `createDesignerRuntimeSession` 创建运行会话，再交给 `ElFormRenderer`。会话持有文档、值、模式和权限；保存走 `@submission` 回执。
@@ -143,21 +199,24 @@ onBeforeUnmount(() => {
 - 键缺失走 `fieldRuntimePolicyFallback`，默认 `HIDDEN`（不渲染、不校验、不提交）。只传关心的字段时须显式设为 `EDITABLE`，此时未列出字段按文档可编辑并继承 `required`。
 - 非法 `accessLevel` 仍按 `HIDDEN` 失败关闭，不会被 fallback 放宽。
 - 权限只能收紧：设计时隐藏或只读的字段，运行时传入 `EDITABLE` 无效。
+- 宿主 `required: true` 只能加严必填；`false` 与缺省均忽略。隐藏或只读时仍自动取消必填。
 
-| 访问级别    | 渲染   | 校验               | 用户提交   | 输入 / 附件 / 子表 / 事件写入 |
-| ----------- | ------ | ------------------ | ---------- | ----------------------------- |
-| `HIDDEN`    | 不渲染 | 不校验             | 不提交     | 拒绝                          |
-| `READ_ONLY` | 只展示 | 不校验             | 不提交     | 拒绝                          |
-| `EDITABLE`  | 正常   | 设计文档必填与规则 | 按提交策略 | 允许                          |
+| 访问级别    | 渲染     | 校验               | 用户提交   | 输入 / 附件 / 子表 / 事件写入 |
+| ----------- | -------- | ------------------ | ---------- | ----------------------------- |
+| `HIDDEN`    | 不渲染   | 不校验             | 不提交     | 拒绝                          |
+| `READ_ONLY` | 详情内容 | 不校验             | 不提交     | 拒绝                          |
+| `EDITABLE`  | 正常     | 设计文档必填与规则 | 按提交策略 | 允许                          |
 
-必填只来自表单设计。隐藏或只读字段自动不必填。同一字段在可编辑 / 只读 / 隐藏下的对照表与 `session.updateRuntimePolicy` 示例见[关系接入文档的权限投影](https://github.com/daxiangme/form-builder/blob/main/docs/relations.md#权限投影)。
+整表运行模式 `READ_ONLY` 仍保留表单布局，但去掉上传、扫码、签名、选点等操作按钮；普通字段显示为禁用控件，也可在设计器「只读展示」中改为纯文本。整表 `DETAIL` 是详情页。新增或编辑下某个字段宿主权限为 `READ_ONLY` 时，仅该字段按详情内容展示，不受「只读展示」影响。
+
+必填来自表单设计，也可由宿主 `required: true` 加严。隐藏或只读字段自动不必填。同一字段在可编辑 / 只读 / 隐藏下的对照表与 `session.updateRuntimePolicy` 示例见[关系接入文档的权限投影](https://github.com/daxiangme/form-builder/blob/main/docs/relations.md#权限投影)。
 
 公式可以刷新只读展示，但不能放宽宿主权限。
 
 ```ts
 const fieldRuntimePolicy: FormFieldRuntimePolicyMap = {
   [titleFieldId]: { accessLevel: 'EDITABLE' },
-  [amountFieldId]: { accessLevel: 'READ_ONLY' },
+  [amountFieldId]: { accessLevel: 'EDITABLE', required: true },
   [secretFieldId]: { accessLevel: 'HIDDEN' },
 }
 
@@ -206,7 +265,13 @@ import {
 const { adapters, dispose } = createLocalPreviewFormAdapter()
 ```
 
-生产环境由宿主实现 `FormRuntimeAdapters`，并在创建会话时注入。不要把 Token、URL 或回调写入表单文档。
+生产环境由宿主实现 `FormRuntimeAdapters`，并在创建会话时注入。不要把 Token、URL 或回调写入表单文档。OCR、定位、扫码与签名的配置、注入和提交值见[采集组件](../../docs/guide/capture.md)。可选的高德定位工厂：
+
+```ts
+import { createAmapLocationAdapter } from 'el-form-gen'
+
+const location = createAmapLocationAdapter({ key: hostAmapKey })
+```
 
 ## 高级扩展与内部架构
 

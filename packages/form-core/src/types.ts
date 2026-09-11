@@ -23,7 +23,15 @@ export type DesignerSemanticType =
 /** 本地字段与未来权威字段来源之间的绑定状态。 */
 export type DesignerBindingStatus = 'UNBOUND' | 'BOUND' | 'STALE' | 'INCOMPATIBLE' | 'MISSING'
 
-/** 设计器组件在静态 Core 中的能力状态。 */
+/**
+ * 设计器组件的目录可用性。
+ *
+ * - `AVAILABLE`：设计态可选，不展示原因。
+ * - `CONDITIONAL`：设计态可选；必须展示 `unavailableReason`；不阻止保存。运行期是否可用由 Adapter、权限或设备决定。
+ * - `UNAVAILABLE`：设计态不可选；画布已有节点保留并告警。
+ *
+ * 宿主只应通过 `FormDesignerCatalogs.components` 声明这三态，不要把条件可用猜成 `capabilities` 布尔值。
+ */
 export type DesignerComponentAvailability = 'AVAILABLE' | 'CONDITIONAL' | 'UNAVAILABLE'
 
 /** 组件面板的稳定分类。 */
@@ -50,6 +58,12 @@ export type FormFieldAccessFallback = 'HIDDEN' | 'EDITABLE'
 export interface FormFieldRuntimePolicy {
   /** 三态访问级别。 */
   accessLevel: FormFieldAccessLevel
+  /**
+   * 宿主强制必填。
+   *
+   * 只能加严：仅 `true` 生效，`false` 与缺省均忽略。隐藏或只读时仍会自动取消必填。
+   */
+  required?: boolean
 }
 
 /** 以字段 ID 为键的完整运行策略投影。 */
@@ -108,6 +122,8 @@ export type DesignerExpression =
       scope: DesignerExpressionFieldScope
       /** ANCESTOR 作用域的父链层数；1 表示直接父行。 */
       ancestorDepth?: number
+      /** 对象值字段的一级属性名，例如定位字段的 `province`。 */
+      valueKey?: string
     }
   | { kind: 'VARIABLE'; variableCode: string }
   | { kind: 'CONTEXT'; key: DesignerExpressionContextKey }
@@ -370,7 +386,12 @@ export interface DesignerDataSchema {
 
 /** 单端 24 栅格配置。 */
 export interface DesignerDeviceGrid {
+  /** 占用的列数，范围 1～24。 */
   span: number
+  /**
+   * 相对上一节点的左留白列数，与跨度之和不超过 24。
+   * 当前行剩余列不足以放下偏移加跨度时换行，并从新行第 0 列起排。
+   */
   offset: number
   showLabel: boolean
   labelPosition: 'INHERIT' | 'TOP' | 'LEFT' | 'RIGHT'
@@ -458,6 +479,7 @@ export interface DesignerAppearance {
    * 普通字段控件统一使用的圆角。
    *
    * `THEME` 跟随宿主 `--el-border-radius-base`；数字为 0～32 且为 4 的倍数的像素值。
+   * 运行弹窗外壳在跟随系统时使用 16px，自定义像素与此项保持一致。
    */
   controlRadius: DesignerRadiusValue
   /** 支持表面的显式布局容器在未覆盖时使用的默认样式。 */
@@ -486,6 +508,7 @@ export interface DesignerActionBarButton {
 export interface DesignerActionBar {
   visible: boolean
   position: 'TOP' | 'BOTTOM' | 'BOTH'
+  /** 动作栏按钮水平对齐；设计画布预览与运行态都会消费。 */
   align: 'LEFT' | 'CENTER' | 'RIGHT'
   buttons: DesignerActionBarButton[]
 }
@@ -608,7 +631,7 @@ export interface DesignerOverlayModule {
   /**
    * 弹窗使用的受控圆角；抽屉保留该值但不渲染圆角。
    *
-   * `THEME` 跟随宿主 `--el-border-radius-base`；数字为 0～32 且为 4 的倍数的像素值。
+   * `THEME` 跟随表单控件圆角：跟随系统时外壳为 16px，自定义像素与全局圆角一致。
    */
   radius: DesignerRadiusValue
   /** 弹窗运行最大高度；抽屉保留该值但继续占满可用高度。 */
@@ -725,6 +748,17 @@ export type DesignerPropertyEditor =
   | (DesignerPropertyEditorBase & { type: 'COLOR' })
   | (DesignerPropertyEditorBase & { type: 'OPTIONS' })
   | (DesignerPropertyEditorBase & {
+      type: 'MULTI_SELECT'
+      options: DesignerPropertyOption[]
+    })
+  | (DesignerPropertyEditorBase & { type: 'RESULT_KEYS' })
+  | (DesignerPropertyEditorBase & {
+      type: 'FIELD_ASSIGNMENTS'
+      /** 映射来源键的固定候选；缺省时读取同字段 `resultKeys`。 */
+      sourceKeys?: DesignerPropertyOption[]
+    })
+  | (DesignerPropertyEditorBase & { type: 'FIELD_ID' })
+  | (DesignerPropertyEditorBase & {
       type: 'DATE_FORMAT'
       sourceKey: string
     })
@@ -778,11 +812,21 @@ export interface DesignerComponentRegistration {
   detailLabelPolicy: 'INHERIT' | 'HIDE'
   /** 只有 SURFACE 容器才允许继承或覆盖表单级容器外观。 */
   containerAppearance: 'NONE' | 'SURFACE'
+  /** 目录解析后的可用性；设计器面板、属性提示和文档诊断必须读这一份。 */
   availability: DesignerComponentAvailability
+  /** 非 `AVAILABLE` 时必须向设计者展示的原因。 */
   unavailableReason: string
   acceptsChildren: boolean
   /** 注册项显式声明可绑定事件；未声明时不显示事件入口。 */
   supportedEvents?: DesignerComponentEvent[]
+  /** 对象值字段可供表达式 `valueKey` 读取的一级属性名。 */
+  valueKeys?: string[]
+  /**
+   * 告诉设计者该组件运行期需要宿主注入什么。
+   *
+   * 文案只描述接入方式，不得包含 URL、Token 或密钥。
+   */
+  hostSetupHint?: string
   properties: DesignerPropertyDefinition[]
 }
 
@@ -941,7 +985,7 @@ export interface FormDirectoryAdapter {
   }>
 }
 
-/** OCR 识别端口。 */
+/** OCR 识别端口。URL 与鉴权由宿主实现持有。 */
 export interface FormOcrAdapter {
   recognize: (request: {
     file: File
@@ -952,16 +996,121 @@ export interface FormOcrAdapter {
   }) => Promise<Record<string, unknown>>
 }
 
-/** 扫码端口。 */
-export interface FormScanAdapter {
-  scan: (request: { context: FormRuntimeAdapterContext }) => Promise<{ text: string }>
+/** 扫码设备就绪状态。 */
+export interface FormScanReadiness {
+  ready: boolean
+  /** 未就绪原因，直接展示给填报人。 */
+  unreadyReason?: string
 }
 
-/** 定位端口。 */
+/** 扫码端口。宿主可以是移动端外壳、扫码枪中间件或浏览器 BarcodeDetector。 */
+export interface FormScanAdapter {
+  /** 查询设备或外壳是否就绪；缺失时视为就绪。 */
+  readiness?: (request: { context: FormRuntimeAdapterContext }) => FormScanReadiness
+  /** 订阅就绪状态变化，返回取消订阅函数。 */
+  subscribeReadiness?: (
+    listener: (state: FormScanReadiness) => void,
+    request: { context: FormRuntimeAdapterContext },
+  ) => () => void
+  scan: (request: {
+    fieldId: string
+    fieldCode: string
+    formats?: string[]
+    parameter?: unknown
+    context: FormRuntimeAdapterContext
+  }) => Promise<{ text: string }>
+}
+
+/**
+ * 定位结果值对象。
+ *
+ * 与地图服务商无关的固定结构。厂商响应解析与坐标系换算由 Adapter 完成，
+ * 组件只按设计态勾选裁剪字段后写入表单值。坐标系固定为 GCJ02。
+ */
+export interface FormLocationValue {
+  longitude: number
+  latitude: number
+  coordinateSystem: 'GCJ02'
+  address?: string
+  name?: string
+  province?: string
+  city?: string
+  district?: string
+  township?: string
+  streetAddress?: string
+  adcode?: string
+  /** 省市区行政区划编码路径，供回填地区级联字段使用。 */
+  adcodePath?: string[]
+  source?: 'CURRENT' | 'PICK'
+  collectedAt?: string
+  provider?: string
+  accuracyMeters?: number
+}
+
+/** VO 中可单独勾选输出的字段。坐标系不在可选集合内。 */
+export type FormLocationField = Exclude<keyof FormLocationValue, 'coordinateSystem'>
+
+/**
+ * 地图选点会话。弹窗外壳由渲染层提供，Adapter 只操作画布与地理编码。
+ */
+export interface FormLocationPickerSession {
+  /** 按关键字搜索地点并移动地图。 */
+  search: (keyword: string) => Promise<void>
+  /** 当前选中值；尚未完成选点时可能为空。 */
+  getValue: () => FormLocationValue | undefined
+  /** 销毁地图实例并释放画布。 */
+  destroy: () => void
+}
+
+/** 定位端口。地图 SDK 与密钥由宿主持有，不进入库。 */
 export interface FormLocationAdapter {
   locate: (request: {
+    enableHighAccuracy?: boolean
+    timeoutMilliseconds?: number
     context: FormRuntimeAdapterContext
-  }) => Promise<{ longitude: number; latitude: number; address?: string }>
+  }) => Promise<FormLocationValue>
+  /**
+   * 由宿主打开完整选点界面；返回 undefined 表示用户取消。
+   *
+   * 若同时提供 `bindPicker`，Vue 渲染层会优先使用画布弹窗，不再调用本方法。
+   */
+  pick?: (request: {
+    fieldId: string
+    fieldCode: string
+    provider?: string
+    initial?: FormLocationValue
+    defaultCenter?: { longitude: number; latitude: number }
+    requestedFields?: FormLocationField[]
+    context: FormRuntimeAdapterContext
+  }) => Promise<FormLocationValue | undefined>
+  /**
+   * 把地图画布挂到渲染层弹窗提供的节点上。
+   *
+   * 地址输入、确认/取消和弹窗宽度由 `el-form-gen` 负责；本方法只渲染地图并回传选点结果。
+   */
+  bindPicker?: (request: {
+    canvas: HTMLElement
+    fieldId: string
+    fieldCode: string
+    provider?: string
+    initial?: FormLocationValue
+    defaultCenter?: { longitude: number; latitude: number }
+    requestedFields?: FormLocationField[]
+    onChange: (value: FormLocationValue) => void
+    context: FormRuntimeAdapterContext
+  }) => Promise<FormLocationPickerSession>
+}
+
+/** 采集类组件把结果回填到其他字段的受控映射。 */
+export interface DesignerFieldAssignment {
+  sourceKey: string
+  targetFieldId: DesignerFieldId
+}
+
+/** OCR 接口返回值的手动声明项。 */
+export interface DesignerResultKey {
+  key: string
+  name: string
 }
 
 /** 动态选项查询与已选值回显端口。 */
@@ -1031,33 +1180,56 @@ export interface FormDesignerReferenceItem {
   enabled?: boolean
 }
 
-/** 目录对内置组件可用性的受控覆盖。 */
+/**
+ * 目录对内置组件可用性的受控覆盖。
+ *
+ * 这是组件可不可选的唯一真源。传入非空 `components` 时，未列出的内置组件会变为 `UNAVAILABLE`。
+ */
 export interface FormDesignerComponentCatalogItem {
+  /** 内置组件的稳定编码，必须与注册表 `componentType` 一致。 */
   componentType: string
   availability: DesignerComponentAvailability
+  /** `CONDITIONAL` 与 `UNAVAILABLE` 时应提供，供面板、属性提示和文档诊断展示。 */
   unavailableReason?: string
 }
 
-/** 宿主向设计器声明的能力开关。 */
+/**
+ * 宿主向设计器声明的历史能力开关。
+ *
+ * @deprecated 组件可用性请只写 `catalogs.components` 的三态。重叠键仅为兼容收紧；`remoteValidation`、`dataSource`、`dateRange` 不会影响组件目录，请改用 `adapters`。
+ */
 export interface FormDesignerHostCapabilities {
+  /** @deprecated 请改用 `components` 中 `file` 的三态。 */
   upload?: boolean
+  /** @deprecated 请改用 `components` 中 `ocr` 的三态。 */
   ocr?: boolean
+  /** @deprecated 请改用 `components` 中 `scan-code` 的三态。 */
   scan?: boolean
+  /** @deprecated 请改用 `components` 中 `position` 的三态。 */
   location?: boolean
+  /** @deprecated 不会影响组件目录，请通过 `adapters.remoteValidation` 声明。 */
   remoteValidation?: boolean
+  /** @deprecated 不会影响组件目录，请通过 `adapters.dataSource` 声明。 */
   dataSource?: boolean
+  /** @deprecated 请改用 `components` 中 `user`、`role`、`organization`、`post` 的三态。 */
   directory?: boolean
+  /** @deprecated 请改用 `components` 中 `dynamic-select`、`dynamic-cascade` 的三态。 */
   dynamicOptions?: boolean
+  /** @deprecated 不会影响组件目录，请通过 `adapters.dateRange` 声明。 */
   dateRange?: boolean
+  /** @deprecated 请改用 `components` 中 `captcha` 的三态。 */
   challenge?: boolean
+  /** @deprecated 请改用 `components` 中 `signature` 的三态。 */
   personalSignature?: boolean
+  /** @deprecated 请改用 `components` 中 `region` 的三态。 */
   regionCascade?: boolean
 }
 
 /**
  * 设计器纯数据目录快照。
  *
- * 只控制内置能力是否可选，不允许注入任意组件、任意 Element Plus Props、CSS、URL 或脚本。
+ * 组件可用性只认 `components` 三态，不允许注入任意组件、任意 Element Plus Props、CSS、URL 或脚本。
+ * 运行期是否具备扫码、定位等端口，继续只看是否传入对应 `adapters`。
  */
 export interface FormDesignerCatalogs {
   components?: FormDesignerComponentCatalogItem[]
@@ -1068,6 +1240,11 @@ export interface FormDesignerCatalogs {
   resources?: FormDesignerReferenceItem[]
   hostActions?: FormDesignerReferenceItem[]
   printTemplates?: FormDesignerReferenceItem[]
+  /**
+   * 历史能力开关。
+   *
+   * @deprecated 请只使用 `components` 声明组件可用性。传入任一键会在解析诊断中告警；`false` 仍会把对应组件收成 `CONDITIONAL` 并覆盖原因。
+   */
   capabilities?: FormDesignerHostCapabilities
 }
 
@@ -1185,6 +1362,28 @@ export interface DesignerCanvasProjection {
   gaps: DesignerCanvasGap[]
   rowCount: number
 }
+
+/** 运行态 ElRow 使用的空白列。 */
+export interface DesignerCanvasFlowGap {
+  kind: 'gap'
+  key: string
+  span: number
+}
+
+/** 运行态 ElRow 使用的节点列。 */
+export interface DesignerCanvasFlowNode {
+  kind: 'node'
+  key: string
+  node: DesignerLayoutNode
+  span: number
+}
+
+/**
+ * 将 24 栅格投影摊平后的渲染项。
+ *
+ * 空白列对应换行前吃掉的剩余列，或当前行内的偏移留白；节点列对应实际控件。
+ */
+export type DesignerCanvasFlowItem = DesignerCanvasFlowGap | DesignerCanvasFlowNode
 
 /** 大纲使用的只读投影节点。 */
 export interface DesignerOutlineItem {

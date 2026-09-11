@@ -7,11 +7,11 @@
     :flush-content-vertical="true"
   >
     <div class="designer-schema-inspector__actions">
-      <ElButton @click="copySchema"><DxSvgIcon icon="ri:file-copy-line" />复制 JSON</ElButton>
-      <ElButton @click="downloadSchema"><DxSvgIcon icon="ri:download-2-line" />下载 JSON</ElButton>
-      <ElButton type="primary" plain @click="openImport"
-        ><DxSvgIcon icon="ri:upload-2-line" />严格导入并比较</ElButton
-      >
+      <FormButton icon="ri:file-copy-line" @click="copySchema">复制 JSON</FormButton>
+      <FormButton icon="ri:download-2-line" @click="downloadSchema">下载 JSON</FormButton>
+      <FormButton type="primary" plain icon="ri:upload-2-line" @click="openImport">
+        严格导入并比较
+      </FormButton>
       <input
         ref="inputRef"
         type="file"
@@ -75,15 +75,19 @@
 import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import DModal from '../infrastructure/FormModalShell.vue'
-import DxSvgIcon from '../infrastructure/FormIcon.vue'
+import FormButton from '../infrastructure/FormButton.vue'
 import { diagnoseDesignerDocument } from '@daxiangme/form-core'
 import { downloadDesignerText } from '../composables/local-draft'
 import { decodeDesignerImport } from '../composables/use-designer-engine'
-import type { DesignerDiagnostic, DesignerDocument } from '@daxiangme/form-core'
+import type {
+  DesignerDiagnostic,
+  DesignerDocument,
+  FormDesignerCatalogs,
+} from '@daxiangme/form-core'
 
 defineOptions({ name: 'DesignerSchemaInspector' })
 
-const props = defineProps<{ document: DesignerDocument }>()
+const props = defineProps<{ document: DesignerDocument; catalogs?: FormDesignerCatalogs }>()
 const emit = defineEmits<{ import: [document: DesignerDocument] }>()
 const visibleModel = defineModel<boolean>({ default: false })
 const activeTab = ref('preview')
@@ -91,7 +95,7 @@ const inputRef = ref<HTMLInputElement>()
 const importDocument = ref<DesignerDocument>()
 const importDiagnostics = ref<DesignerDiagnostic[]>([])
 const formattedDocument = computed(() => JSON.stringify(props.document, null, 2))
-const diagnostics = computed(() => diagnoseDesignerDocument(props.document))
+const diagnostics = computed(() => diagnoseDesignerDocument(props.document, {}, props.catalogs))
 const diffItems = computed(() =>
   importDocument.value ? diffValues(props.document, importDocument.value, '$').slice(0, 500) : [],
 )

@@ -1,5 +1,5 @@
 <template>
-  <ElCol v-if="relationNode && nodeVisible" :span="grid.span" :offset="grid.offset">
+  <ElCol v-if="relationNode && nodeVisible" :span="grid.span" :offset="0">
     <section
       v-if="collectionPolicy.visible"
       class="daxiang-form-relation"
@@ -71,32 +71,42 @@
             >
           </div>
         </header>
-        <ElRow :gutter="document.appearance.gridGutter">
-          <DesignerSessionNode
-            v-for="child in inlineChildren"
-            :key="child.id"
-            :node="child"
-            :session="session"
-            :snapshot="snapshot"
-            :row-key="row.clientRowKey"
-            :device="device"
-            @runtime-warning="emit('runtime-warning', $event)"
-          />
-        </ElRow>
-        <details v-if="nestedChildren.length" class="daxiang-form-relation__nested">
-          <summary>子项详情</summary>
-          <ElRow :gutter="document.appearance.gridGutter">
+        <DesignerGridFlowRow
+          :nodes="occupyingSessionNodes(inlineChildren, row.clientRowKey)"
+          :device="device"
+          :gutter="document.appearance.gridGutter"
+          :row-gap="document.appearance.rowGap"
+        >
+          <template #default="{ node }">
             <DesignerSessionNode
-              v-for="child in nestedChildren"
-              :key="child.id"
-              :node="child"
+              :node="node"
               :session="session"
               :snapshot="snapshot"
               :row-key="row.clientRowKey"
               :device="device"
               @runtime-warning="emit('runtime-warning', $event)"
             />
-          </ElRow>
+          </template>
+        </DesignerGridFlowRow>
+        <details v-if="nestedChildren.length" class="daxiang-form-relation__nested">
+          <summary>子项详情</summary>
+          <DesignerGridFlowRow
+            :nodes="occupyingSessionNodes(nestedChildren, row.clientRowKey)"
+            :device="device"
+            :gutter="document.appearance.gridGutter"
+            :row-gap="document.appearance.rowGap"
+          >
+            <template #default="{ node }">
+              <DesignerSessionNode
+                :node="node"
+                :session="session"
+                :snapshot="snapshot"
+                :row-key="row.clientRowKey"
+                :device="device"
+                @runtime-warning="emit('runtime-warning', $event)"
+              />
+            </template>
+          </DesignerGridFlowRow>
         </details>
       </article>
       <div class="daxiang-form-relation__footer">
@@ -171,7 +181,7 @@
       </template>
     </ElDialog>
   </ElCol>
-  <ElCol v-else-if="layoutContainer && nodeVisible" :span="grid.span" :offset="grid.offset">
+  <ElCol v-else-if="layoutContainer && nodeVisible" :span="grid.span" :offset="0">
     <section
       class="daxiang-form-session-container"
       :class="containerClasses"
@@ -185,37 +195,45 @@
           :name="slot.slotCode"
           :label="slot.label"
         >
-          <ElRow :gutter="document.appearance.gridGutter">
+          <DesignerGridFlowRow
+            :nodes="occupyingSessionNodes(slot.children, rowKey)"
+            :device="device"
+            :gutter="document.appearance.gridGutter"
+            :row-gap="document.appearance.rowGap"
+          >
+            <template #default="{ node }">
+              <DesignerSessionNode
+                :node="node"
+                :session="session"
+                :snapshot="snapshot"
+                :row-key="rowKey"
+                :device="device"
+                @runtime-warning="emit('runtime-warning', $event)"
+              />
+            </template>
+          </DesignerGridFlowRow>
+        </ElTabPane>
+      </ElTabs>
+      <template v-else>
+        <DesignerGridFlowRow
+          v-for="slot in layoutContainer.slots"
+          :key="slot.id"
+          :nodes="occupyingSessionNodes(slot.children, rowKey)"
+          :device="device"
+          :gutter="document.appearance.gridGutter"
+          :row-gap="document.appearance.rowGap"
+        >
+          <template #default="{ node }">
             <DesignerSessionNode
-              v-for="child in slot.children"
-              :key="child.id"
-              :node="child"
+              :node="node"
               :session="session"
               :snapshot="snapshot"
               :row-key="rowKey"
               :device="device"
               @runtime-warning="emit('runtime-warning', $event)"
             />
-          </ElRow>
-        </ElTabPane>
-      </ElTabs>
-      <template v-else>
-        <ElRow
-          v-for="slot in layoutContainer.slots"
-          :key="slot.id"
-          :gutter="document.appearance.gridGutter"
-        >
-          <DesignerSessionNode
-            v-for="child in slot.children"
-            :key="child.id"
-            :node="child"
-            :session="session"
-            :snapshot="snapshot"
-            :row-key="rowKey"
-            :device="device"
-            @runtime-warning="emit('runtime-warning', $event)"
-          />
-        </ElRow>
+          </template>
+        </DesignerGridFlowRow>
       </template>
     </section>
   </ElCol>
@@ -236,6 +254,7 @@
     :adapter-context="{ ...session.adapterContext, rowKey }"
     :readonly-display-mode="document.appearance.readonlyDisplayMode"
     @update-field-value="writeField"
+    @apply-field-assignments="applyFieldAssignments"
     @component-event="componentEvent"
     @runtime-warning="emit('runtime-warning', $event)"
   />
@@ -262,7 +281,9 @@ import type {
   DesignerRuntimeSession,
   DesignerRuntimeSnapshot,
 } from '@daxiangme/form-core'
+import DesignerGridFlowRow from './DesignerGridFlowRow.vue'
 import DesignerRuntimeNode from './DesignerRuntimeNode.vue'
+import { designerLayoutNodeOccupiesRuntimeGrid } from './runtime-grid'
 import { sessionSubmitKey } from './session-rendering-context'
 
 defineOptions({ name: 'DesignerSessionNode' })
@@ -330,6 +351,24 @@ const row = computed(() => {
   return props.session.readRow(props.rowKey)
 })
 const fields = computed(() => document.value.dataSchema.fields)
+function occupyingSessionNodes(nodes: DesignerLayoutNode[], rowKey: string): DesignerLayoutNode[] {
+  void props.snapshot.revision
+  const fieldList = fields.value
+  const fieldStates = Object.fromEntries(
+    fieldList.map((field) => [field.id, props.session.readFieldState(rowKey, field.id)]),
+  )
+  const nodeStates = Object.fromEntries(
+    nodes.map((node) => [node.id, props.session.readNodeState(rowKey, node.id)]),
+  )
+  return nodes.filter((node) =>
+    designerLayoutNodeOccupiesRuntimeGrid(node, {
+      mode: displayMode.value,
+      fields: fieldList,
+      fieldStates,
+      nodeStates,
+    }),
+  )
+}
 const projectedValue = computed(() => ({ fields: row.value?.values ?? {}, collections: {} }))
 const fieldStates = computed(() => {
   void props.snapshot.revision
@@ -475,6 +514,19 @@ function writeField(fieldId: string, value: unknown) {
         })
     },
   )
+}
+function applyFieldAssignments(sourceFieldId: string, source: Record<string, unknown>) {
+  pendingWrite = pendingWrite.then(async () => {
+    const result = await command({
+      type: 'APPLY_FIELD_ASSIGNMENTS',
+      rowKey: props.rowKey,
+      sourceFieldId,
+      source,
+    })
+    if (result.ok) {
+      for (const issue of result.issues) emit('runtime-warning', issue.message)
+    }
+  })
 }
 async function componentEvent(nodeId: string, event: DesignerComponentEvent) {
   if (event === 'CHANGE') return

@@ -77,6 +77,16 @@
             :value="field.id"
           />
         </ElSelect>
+        <ElSelect
+          v-if="fieldValueKeys.length"
+          :model-value="expression.valueKey ?? ''"
+          clearable
+          placeholder="对象属性（可选）"
+          aria-label="字段属性"
+          @update:model-value="updateValueKey"
+        >
+          <ElOption v-for="key in fieldValueKeys" :key="key" :label="key" :value="key" />
+        </ElSelect>
       </template>
 
       <ElSelect
@@ -122,14 +132,15 @@
             />
           </ElOptionGroup>
         </ElSelect>
-        <ElButton
+        <FormButton
           v-if="isVariadicFunction(expression.function)"
           text
           :disabled="expression.arguments.length >= 8"
+          icon="ri:add-line"
           @click="addArgument"
         >
-          <DxSvgIcon icon="ri:add-line" />参数
-        </ElButton>
+          参数
+        </FormButton>
       </template>
     </div>
 
@@ -151,15 +162,14 @@
           :depth="depth + 1"
           @update:model-value="updateArgument(index, $event)"
         />
-        <ElButton
+        <FormButton
           v-if="canRemoveArgument(expression.function, expression.arguments.length)"
           text
           type="danger"
           aria-label="删除函数参数"
+          icon="ri:delete-bin-line"
           @click="removeArgument(index)"
-        >
-          <DxSvgIcon icon="ri:delete-bin-line" />
-        </ElButton>
+        />
       </div>
     </div>
   </div>
@@ -167,15 +177,17 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import DxSvgIcon from '../infrastructure/FormIcon.vue'
-import type {
-  DesignerDocument,
-  DesignerExpression,
-  DesignerExpressionContextKey,
-  DesignerExpressionFieldScope,
-  DesignerExpressionFunction,
-  DesignerField,
-  DesignerVariableDefinition,
+import FormButton from '../infrastructure/FormButton.vue'
+import {
+  findDesignerComponent,
+  resolveDesignerFieldValueKeys,
+  type DesignerDocument,
+  type DesignerExpression,
+  type DesignerExpressionContextKey,
+  type DesignerExpressionFieldScope,
+  type DesignerExpressionFunction,
+  type DesignerField,
+  type DesignerVariableDefinition,
 } from '@daxiangme/form-core'
 
 defineOptions({ name: 'DesignerExpressionEditor' })
@@ -270,8 +282,16 @@ function updateLiteral(value: unknown): void {
 
 function updateFieldId(value: unknown): void {
   if (expression.value.kind === 'FIELD' && typeof value === 'string') {
-    emit('update:modelValue', { ...expression.value, fieldId: value })
+    emit('update:modelValue', { ...expression.value, fieldId: value, valueKey: undefined })
   }
+}
+
+function updateValueKey(value: unknown): void {
+  if (expression.value.kind !== 'FIELD') return
+  emit('update:modelValue', {
+    ...expression.value,
+    valueKey: typeof value === 'string' && value ? value : undefined,
+  })
 }
 
 function updateFieldScope(value: unknown): void {
@@ -302,6 +322,13 @@ const availableFields = computed(() =>
     ? fieldsForScope(expression.value.scope, expression.value.ancestorDepth)
     : props.fields,
 )
+const fieldValueKeys = computed(() => {
+  const current = expression.value
+  if (current.kind !== 'FIELD') return []
+  const field = availableFields.value.find((item) => item.id === current.fieldId)
+  if (!field) return []
+  return resolveDesignerFieldValueKeys(field, findDesignerComponent(field.componentType)?.valueKeys)
+})
 
 /** 只列出根、当前行或指定祖先的合法字段，不允许跨父行选择。 */
 function fieldsForScope(scope: DesignerExpressionFieldScope, ancestorDepth = 1): DesignerField[] {

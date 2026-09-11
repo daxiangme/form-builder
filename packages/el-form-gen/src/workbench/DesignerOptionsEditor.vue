@@ -11,17 +11,21 @@
         placeholder="选项值"
         @change="updateOption(index, 'value', $event)"
       />
-      <ElButton link type="danger" aria-label="删除选项" @click="removeOption(index)">
-        <DxSvgIcon icon="ri:delete-bin-line" />
-      </ElButton>
+      <FormButton
+        link
+        type="danger"
+        aria-label="删除选项"
+        icon="ri:delete-bin-line"
+        @click="removeOption(index)"
+      />
     </div>
-    <ElButton link @click="addOption"><DxSvgIcon icon="ri:add-line" />添加选项</ElButton>
+    <FormButton link icon="ri:add-line" @click="addOption">添加选项</FormButton>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import DxSvgIcon from '../infrastructure/FormIcon.vue'
+import FormButton from '../infrastructure/FormButton.vue'
 import type { DesignerOption } from '@daxiangme/form-core'
 
 defineOptions({ name: 'DesignerOptionsEditor' })

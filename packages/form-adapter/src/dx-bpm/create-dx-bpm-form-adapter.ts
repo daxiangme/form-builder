@@ -196,6 +196,7 @@ export function createDxBpmFormAdapter(
       navigateResource: options.navigateResource,
     }
   }
+  // 扫码、定位等采集端口由 extras 注入；缺失时控件失败关闭，不提供永远抛错的假实现。
   return { ...adapters, ...options.extras }
 }
 

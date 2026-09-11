@@ -19,12 +19,15 @@ export {
   designerRadiusValueLabel,
   includeDesignerCurrentOption,
   parseDesignerRadiusInput,
+  resolveDesignerDialogRadius,
+  resolveDesignerCatalogComponents,
   serializeDesignerDocument,
 } from '@daxiangme/form-core'
 
 /** 普通 Vue 宿主可直接从主包引用的稳定公共类型。 */
 export type {
   DesignerAppearance,
+  DesignerComponentAvailability,
   DesignerDevice,
   DesignerDiagnostic,
   DesignerDocument,
@@ -40,17 +43,28 @@ export type {
   DesignerSubmissionProjection,
   DesignerValidationResult,
   FormDesignerCatalogs,
+  FormDesignerComponentCatalogItem,
   FormDesignerHostCapabilities,
   FormFieldAccessFallback,
   FormFieldAccessLevel,
   FormFieldRuntimePolicy,
   FormFieldRuntimePolicyMap,
+  FormLocationField,
+  FormLocationPickerSession,
+  FormLocationValue,
   FormRuntimeAdapterContext,
   FormRuntimeAdapters,
+  FormScanReadiness,
+  DesignerFieldAssignment,
+  DesignerResultKey,
 } from '@daxiangme/form-core'
 
-/** 主包传递依赖的本地预览与 DX BPM Adapter 工厂。 */
-export { createDxBpmFormAdapter, createLocalPreviewFormAdapter } from '@daxiangme/form-adapter'
+/** 主包传递依赖的本地预览、高德定位与 DX BPM Adapter 工厂。 */
+export {
+  createAmapLocationAdapter,
+  createDxBpmFormAdapter,
+  createLocalPreviewFormAdapter,
+} from '@daxiangme/form-adapter'
 /** 关系表单的内存宿主示例，可用于独立演示保存与冲突处理。 */
 export { createLocalRelationFormAdapter } from '@daxiangme/form-adapter'
 
@@ -125,6 +139,7 @@ export type {
 
 /** 主包传递依赖的 Adapter 与传输端口类型。 */
 export type {
+  CreateAmapLocationAdapterOptions,
   CreateDxBpmFormAdapterOptions,
   CreateLocalPreviewFormAdapterOptions,
   FormTransport,

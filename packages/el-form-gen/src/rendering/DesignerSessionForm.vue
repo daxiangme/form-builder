@@ -31,7 +31,11 @@
       />
     </header>
     <template v-if="!overlayOnly">
-      <div v-if="showActions('TOP')" class="daxiang-form-session__actions">
+      <div
+        v-if="showActions('TOP')"
+        class="daxiang-form-session__actions is-pinned-top"
+        :class="actionBarAlignClass"
+      >
         <ElButton
           v-for="button in actionButtons"
           :key="button.action"
@@ -42,27 +46,39 @@
           >{{ button.label }}</ElButton
         >
       </div>
-      <ElForm
-        :label-position="labelPosition"
-        :label-width="session.document.appearance.labelWidth"
-        :label-suffix="session.document.appearance.labelSuffix"
-        :size="elementSize"
-      >
-        <ElRow :gutter="session.document.appearance.gridGutter">
-          <DesignerSessionNode
-            v-for="node in renderedNodes"
-            :key="`${snapshot.sessionId}:${node.id}`"
-            :node="node"
-            :session="session"
-            :snapshot="snapshot"
-            :row-key="renderedRowKey"
+      <div class="daxiang-form-session__body">
+        <ElForm
+          :label-position="labelPosition"
+          :label-width="session.document.appearance.labelWidth"
+          :label-suffix="session.document.appearance.labelSuffix"
+          :size="elementSize"
+        >
+          <DesignerGridFlowRow
+            :nodes="occupyingRootNodes"
             :device="device"
-            @runtime-warning="warn"
-          />
-        </ElRow>
-        <ElEmpty v-if="!renderedNodes.length" description="当前表单没有内容" />
-      </ElForm>
-      <div v-if="showBottomActions" class="daxiang-form-session__actions">
+            :gutter="session.document.appearance.gridGutter"
+            :row-gap="session.document.appearance.rowGap"
+          >
+            <template #default="{ node }">
+              <DesignerSessionNode
+                :key="`${snapshot.sessionId}:${node.id}`"
+                :node="node"
+                :session="session"
+                :snapshot="snapshot"
+                :row-key="renderedRowKey"
+                :device="device"
+                @runtime-warning="warn"
+              />
+            </template>
+          </DesignerGridFlowRow>
+          <ElEmpty v-if="!renderedNodes.length" description="当前表单没有内容" />
+        </ElForm>
+      </div>
+      <div
+        v-if="showBottomActions"
+        class="daxiang-form-session__actions is-pinned-bottom"
+        :class="actionBarAlignClass"
+      >
         <ElButton
           v-if="!session.document.actionBar.visible && writableMode"
           type="primary"
@@ -95,7 +111,7 @@
       :title="draftModule?.name ?? '编辑当前行'"
       :width="draftModule?.width ?? 800"
       :size="draftModule?.width ?? 800"
-      :radius="draftModule?.radius"
+      :radius="overlayDialogRadius"
       :max-height="resolveDesignerOverlayMaxHeight(draftModule?.maxHeightPreset ?? 'VIEWPORT')"
       destroy-on-close
       :close-on-click-modal="false"
@@ -160,7 +176,9 @@ import type {
   DesignerSubmissionProjection,
 } from '@daxiangme/form-core'
 import { designerControlRadiusBind } from '../designer-radius-style'
+import DesignerGridFlowRow from './DesignerGridFlowRow.vue'
 import DesignerSessionNode from './DesignerSessionNode.vue'
+import { designerLayoutNodeOccupiesRuntimeGrid } from './runtime-grid'
 import { sessionSubmitKey } from './session-rendering-context'
 import FormModalShell from '../infrastructure/FormModalShell.vue'
 
@@ -236,6 +254,26 @@ const writableMode = computed(() => {
 })
 const renderedNodes = computed(() => props.nodes ?? props.session.document.uiSchema.root)
 const renderedRowKey = computed(() => props.rowKey ?? snapshot.value.value.root.clientRowKey)
+const occupyingRootNodes = computed(() => {
+  void snapshot.value.revision
+  const rowKey = renderedRowKey.value
+  const fields = props.session.document.dataSchema.fields
+  const fieldStates = Object.fromEntries(
+    fields.map((field) => [field.id, props.session.readFieldState(rowKey, field.id)]),
+  )
+  const nodes = renderedNodes.value
+  const nodeStates = Object.fromEntries(
+    nodes.map((node) => [node.id, props.session.readNodeState(rowKey, node.id)]),
+  )
+  return nodes.filter((node) =>
+    designerLayoutNodeOccupiesRuntimeGrid(node, {
+      mode: snapshot.value.status === 'READY' ? props.session.mode : 'READ_ONLY',
+      fields,
+      fieldStates,
+      nodeStates,
+    }),
+  )
+})
 const controlRadius = computed(() =>
   designerControlRadiusBind(props.session.document.appearance.controlRadius),
 )
@@ -251,6 +289,9 @@ const elementSize = computed(() =>
 )
 const actionButtons = computed(() =>
   props.session.document.actionBar.buttons.filter((button) => button.enabled),
+)
+const actionBarAlignClass = computed(
+  () => `is-align-${props.session.document.actionBar.align.toLowerCase()}`,
 )
 const modeOptions = [
   { label: '新增', value: 'CREATE' },
@@ -414,6 +455,13 @@ const draftModule = computed(() =>
     (module) => module.code === snapshot.value.activeDraft?.moduleCode,
   ),
 )
+const overlayDialogRadius = computed(() => {
+  const radius = draftModule.value?.radius
+  if (radius === undefined || radius === 'THEME') {
+    return props.session.document.appearance.controlRadius
+  }
+  return radius
+})
 const draftNodes = computed(() => {
   if (draftModule.value) return draftModule.value.root
   const key = snapshot.value.activeDraft?.rowKey
@@ -488,12 +536,16 @@ watch(
 <style scoped>
 .daxiang-form.daxiang-form-session {
   box-sizing: border-box;
+  display: flex;
   width: 100%;
   min-height: 0;
+  height: 100%;
   margin: 0;
   padding: 16px;
+  overflow: hidden;
   color: var(--el-text-color-primary);
   background: var(--el-bg-color);
+  flex-direction: column;
 }
 
 .daxiang-form.daxiang-form-session.is-mobile:not(.is-embedded) {
@@ -502,8 +554,12 @@ watch(
 }
 
 .daxiang-form.daxiang-form-session.is-embedded {
+  display: block;
+  height: auto;
+  max-height: none;
   padding: 0;
   margin: 0;
+  overflow: visible;
 }
 
 .daxiang-form .daxiang-form-session__toolbar {
@@ -513,6 +569,7 @@ watch(
   align-items: center;
   justify-content: space-between;
   padding-bottom: 16px;
+  flex: 0 0 auto;
 }
 
 .daxiang-form .daxiang-form-session__toolbar > div {
@@ -521,11 +578,43 @@ watch(
   align-items: center;
 }
 
+.daxiang-form .daxiang-form-session__body {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: auto;
+}
+
+.daxiang-form.daxiang-form-session.is-embedded .daxiang-form-session__body {
+  overflow: visible;
+}
+
 .daxiang-form .daxiang-form-session__actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-block: 16px;
+  flex: 0 0 auto;
+}
+
+.daxiang-form .daxiang-form-session__actions.is-pinned-top {
+  padding-bottom: 12px;
+}
+
+.daxiang-form .daxiang-form-session__actions.is-pinned-bottom {
+  padding-top: 12px;
+  border-top: 1px solid var(--el-border-color-lighter);
+  background: var(--el-bg-color);
+}
+
+.daxiang-form .daxiang-form-session__actions.is-align-left {
+  justify-content: flex-start;
+}
+
+.daxiang-form .daxiang-form-session__actions.is-align-center {
+  justify-content: center;
+}
+
+.daxiang-form .daxiang-form-session__actions.is-align-right {
+  justify-content: flex-end;
 }
 
 .daxiang-form-session__issue-list p {

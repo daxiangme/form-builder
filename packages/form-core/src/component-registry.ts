@@ -19,6 +19,13 @@ import {
   DESIGNER_TIMEOUT_PRESETS,
   numberOptions,
 } from './property-editor-presets'
+import {
+  FORM_LOCATION_DEFAULT_OUTPUT_FIELDS,
+  FORM_LOCATION_DEFAULT_PICKER_DIALOG_WIDTH,
+  FORM_LOCATION_MAX_PICKER_DIALOG_WIDTH,
+  FORM_LOCATION_MIN_PICKER_DIALOG_WIDTH,
+  FORM_LOCATION_OUTPUT_FIELDS,
+} from './location-value'
 
 const TEXT_OPTIONS: DesignerPropertyDefinition[] = [
   property('placeholder', '占位提示', 'BASIC', 'TEXT'),
@@ -591,6 +598,11 @@ export const DESIGNER_COMPONENTS: readonly DesignerComponentRegistration[] = Obj
       }),
     ],
     24,
+    'AVAILABLE',
+    '',
+    {
+      hostSetupHint: '文件上传由宿主通过 adapters.asset 注入，URL 与鉴权留在宿主请求层。',
+    },
   ),
   field(
     'number',
@@ -821,7 +833,12 @@ export const DESIGNER_COMPONENTS: readonly DesignerComponentRegistration[] = Obj
     'ri:quill-pen-line',
     'ADVANCED',
     'FILE',
-    { lineWidth: 2, penColor: '#111827', allowPersonalSignatureReuse: false },
+    {
+      lineWidth: 2,
+      penColor: '#111827',
+      allowPersonalSignatureReuse: false,
+      storageMode: 'INLINE_BASE64',
+    },
     [
       property(
         'lineWidth',
@@ -838,8 +855,21 @@ export const DESIGNER_COMPONENTS: readonly DesignerComponentRegistration[] = Obj
       ),
       property('penColor', '笔画颜色', 'DISPLAY', 'COLOR'),
       property('allowPersonalSignatureReuse', '允许复用个人签名', 'CAPABILITY', 'BOOLEAN'),
+      property('storageMode', '存储方式', 'DATA', 'SELECT', {
+        options: selectOptions(
+          ['INLINE_BASE64', 'ASSET'],
+          ['内联图片', '上传为文件（需 adapters.asset）'],
+        ),
+        description: '默认把签名保存为图片数据。切换为文件时由宿主资产端口上传并保存资产编号。',
+      }),
     ],
     24,
+    'AVAILABLE',
+    '',
+    {
+      hostSetupHint:
+        '默认把签名保存为内联图片。切换为文件存储时需通过 adapters.asset 注入上传能力；复用个人签名需 adapters.personalSignature。',
+    },
   ),
   field(
     'opinion',
@@ -879,6 +909,9 @@ export const DESIGNER_COMPONENTS: readonly DesignerComponentRegistration[] = Obj
       property('signatureRequired', '签名必填', 'DATA', 'BOOLEAN'),
     ],
     24,
+    'AVAILABLE',
+    '',
+    { valueKeys: ['opinion', 'signature'] },
   ),
   referenceField('process-reference', '流程引用', 'ri:flow-chart'),
   field(
@@ -952,17 +985,43 @@ export const DESIGNER_COMPONENTS: readonly DesignerComponentRegistration[] = Obj
     'ri:qr-scan-2-line',
     'ADVANCED',
     'STRING',
-    { allowManualInput: true, allowModification: true, displayMode: 'INPUT', formats: ['qr_code'] },
+    {
+      allowManualInput: true,
+      allowModification: true,
+      displayMode: 'INPUT',
+      formats: ['qr_code'],
+      scanParameterFieldId: '',
+    },
     [
       property('allowManualInput', '允许手工输入', 'CAPABILITY', 'BOOLEAN'),
       property('allowModification', '允许修改结果', 'CAPABILITY', 'BOOLEAN'),
       property('displayMode', '显示方式', 'DISPLAY', 'SELECT', {
         options: selectOptions(['INPUT', 'LABEL', 'HIDDEN'], ['输入框', '文字', '隐藏']),
       }),
+      property('formats', '条码格式', 'DATA', {
+        type: 'MULTI_SELECT',
+        options: selectOptions(
+          ['qr_code', 'code_128', 'code_39', 'ean_13', 'ean_8', 'upc_a', 'pdf417', 'data_matrix'],
+          ['QR 码', 'Code 128', 'Code 39', 'EAN-13', 'EAN-8', 'UPC-A', 'PDF417', 'Data Matrix'],
+        ),
+      }),
+      property(
+        'scanParameterFieldId',
+        '扫码入参字段',
+        'DATA',
+        { type: 'FIELD_ID' },
+        {
+          description: '同实体字段，运行时取其当前值作为扫码入参。',
+        },
+      ),
     ],
     12,
     'CONDITIONAL',
     '静态 Core 不申请摄像头权限',
+    {
+      hostSetupHint:
+        '扫码由宿主通过 adapters.scan 注入。可实现 readiness 声明设备就绪状态；URL 与鉴权留在宿主。',
+    },
   ),
   field(
     'ocr',
@@ -970,20 +1029,52 @@ export const DESIGNER_COMPONENTS: readonly DesignerComponentRegistration[] = Obj
     'ri:scan-line',
     'ADVANCED',
     'OBJECT',
-    { recognitionType: 'BASIC_GENERAL', retainOriginal: true, allowResultEditing: true },
+    {
+      recognitionType: 'BASIC_GENERAL',
+      retainOriginal: true,
+      allowResultEditing: true,
+      confirmOverwriteOnAssignment: true,
+      resultKeys: [],
+      fieldMappings: [],
+    },
     [
-      property('recognitionType', '识别类型', 'CAPABILITY', 'SELECT', {
-        options: selectOptions(
-          ['BASIC_GENERAL', 'ID_CARD', 'BANK_CARD', 'BUSINESS_LICENSE', 'INVOICE'],
-          ['通用文字', '身份证', '银行卡', '营业执照', '发票'],
-        ),
-      }),
+      property(
+        'recognitionType',
+        '识别类型',
+        'CAPABILITY',
+        {
+          type: 'SELECT',
+          options: selectOptions(
+            ['BASIC_GENERAL', 'ID_CARD', 'BANK_CARD', 'BUSINESS_LICENSE', 'INVOICE'],
+            ['通用文字', '身份证', '银行卡', '营业执照', '发票'],
+          ),
+          legacyValuePolicy: 'PRESERVE',
+        },
+        { description: '预设类型仅作提示；实际识别由宿主 adapters.ocr 执行。' },
+      ),
       property('retainOriginal', '保留原图', 'DATA', 'BOOLEAN'),
       property('allowResultEditing', '允许修改结果', 'CAPABILITY', 'BOOLEAN'),
+      property('confirmOverwriteOnAssignment', '回填前确认覆盖', 'CAPABILITY', 'BOOLEAN'),
+      property('resultKeys', '接口返回值', 'DATA', 'RESULT_KEYS', {
+        description: '手动声明识别接口会返回的键，供本字段取值和回填映射使用。',
+      }),
+      property(
+        'fieldMappings',
+        '回填映射',
+        'DATA',
+        { type: 'FIELD_ASSIGNMENTS' },
+        {
+          description: '把识别结果写到其他可编辑字段。',
+        },
+      ),
     ],
     24,
     'CONDITIONAL',
-    '静态 Core 不调用百度 OCR',
+    '静态 Core 不调用识别服务',
+    {
+      hostSetupHint:
+        '识别接口由宿主通过 adapters.ocr 注入。URL、Token 与鉴权留在宿主请求层，不要写进表单配置。',
+    },
   ),
   field(
     'position',
@@ -991,19 +1082,69 @@ export const DESIGNER_COMPONENTS: readonly DesignerComponentRegistration[] = Obj
     'ri:map-pin-line',
     'ADVANCED',
     'OBJECT',
-    { enableHighAccuracy: true, timeout: 10000 },
+    {
+      enableHighAccuracy: true,
+      timeout: 10000,
+      mapProvider: 'amap',
+      allowManualPick: true,
+      showCoordinates: true,
+      pickerDialogWidth: FORM_LOCATION_DEFAULT_PICKER_DIALOG_WIDTH,
+      defaultCenter: '',
+      confirmOverwriteOnAssignment: true,
+      outputFields: [...FORM_LOCATION_DEFAULT_OUTPUT_FIELDS],
+      fieldMappings: [],
+    },
     [
+      property('mapProvider', '地图服务商', 'CAPABILITY', 'SELECT', {
+        options: selectOptions(['amap', 'tencent', 'baidu'], ['高德', '腾讯', '百度']),
+        description: '只声明使用哪家地图。Key 由宿主在 adapters.location 注入。',
+      }),
+      property('allowManualPick', '允许地图选点', 'CAPABILITY', 'BOOLEAN'),
+      property('showCoordinates', '显示经纬度', 'DISPLAY', 'BOOLEAN'),
+      property('pickerDialogWidth', '选点弹窗宽度', 'DISPLAY', 'NUMBER', {
+        minimum: FORM_LOCATION_MIN_PICKER_DIALOG_WIDTH,
+        maximum: FORM_LOCATION_MAX_PICKER_DIALOG_WIDTH,
+        step: 1,
+        unit: '%',
+        description: '相对浏览器视口宽度，默认 60%。',
+        visibleWhen: (configuration) => configuration.allowManualPick !== false,
+      }),
+      property('defaultCenter', '默认中心点', 'DATA', 'TEXT', {
+        description: '格式为「经度,纬度」，例如 116.397428,39.90923。',
+      }),
       property('enableHighAccuracy', '高精度定位', 'CAPABILITY', 'BOOLEAN'),
       property(
         'timeout',
         '定位超时',
         'CAPABILITY',
-        presetNumberEditor(DESIGNER_TIMEOUT_PRESETS, 1000, 60000, { unit: '秒' }),
+        presetNumberEditor(DESIGNER_TIMEOUT_PRESETS, 1000, 60000),
       ),
+      property(
+        'outputFields',
+        '写入本字段的结果',
+        'DATA',
+        {
+          type: 'MULTI_SELECT',
+          options: locationOutputOptions(),
+        },
+        {
+          description: '坐标系在写出经纬度时自动带上，不单独勾选。',
+        },
+      ),
+      property('confirmOverwriteOnAssignment', '回填前确认覆盖', 'CAPABILITY', 'BOOLEAN'),
+      property('fieldMappings', '回填到其他字段', 'DATA', {
+        type: 'FIELD_ASSIGNMENTS',
+        sourceKeys: locationOutputOptions(),
+      }),
     ],
     12,
     'CONDITIONAL',
     '静态 Core 不申请浏览器定位权限',
+    {
+      hostSetupHint:
+        '地图 Key 与 SDK 由宿主通过 adapters.location 注入。本组件只声明服务商、选点方式和输出字段。',
+      valueKeys: [...FORM_LOCATION_OUTPUT_FIELDS],
+    },
   ),
 
   field(
@@ -1123,6 +1264,7 @@ function field(
   defaultSpan = 12,
   availability: DesignerComponentRegistration['availability'] = 'AVAILABLE',
   unavailableReason = '',
+  extras: { hostSetupHint?: string; valueKeys?: string[] } = {},
 ): DesignerComponentRegistration {
   return registration({
     componentType,
@@ -1141,6 +1283,8 @@ function field(
     unavailableReason,
     acceptsChildren: false,
     supportedEvents: ['CHANGE', 'BLUR', 'FOCUS'],
+    hostSetupHint: extras.hostSetupHint,
+    valueKeys: extras.valueKeys,
     properties,
   })
 }
@@ -1367,7 +1511,33 @@ function legacyPropertyEditor(
   if (type === 'GRID_SPAN') return { type, device: 'desktop', ...shared }
   if (type === 'GRID_OFFSET') return { type, spanKey: 'span', ...shared }
   if (type === 'URL') return { type, maxLength: extra.maxLength, ...shared }
+  if (type === 'MULTI_SELECT') return { type, options: extra.options ?? [], ...shared }
+  if (type === 'RESULT_KEYS' || type === 'FIELD_ID') return { type, ...shared }
+  if (type === 'FIELD_ASSIGNMENTS') return { type, ...shared }
   return { type, ...shared }
+}
+
+function locationOutputOptions(): DesignerPropertyOption[] {
+  return selectOptions(
+    [...FORM_LOCATION_OUTPUT_FIELDS],
+    [
+      '经度',
+      '纬度',
+      '完整地址',
+      '地点名称',
+      '省',
+      '市',
+      '区县',
+      '乡镇街道',
+      '门牌',
+      '区划编码',
+      '区划编码路径',
+      '采集方式',
+      '采集时间',
+      '服务商',
+      '精度（米）',
+    ],
+  )
 }
 
 function selectOptions(

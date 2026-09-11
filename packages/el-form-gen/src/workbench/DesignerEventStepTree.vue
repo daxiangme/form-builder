@@ -17,9 +17,13 @@
           }}</small>
         </span>
       </button>
-      <ElButton text type="danger" aria-label="删除步骤" @click="removeStep(step.id)">
-        <DxSvgIcon icon="ri:delete-bin-line" />
-      </ElButton>
+      <FormButton
+        text
+        type="danger"
+        aria-label="删除步骤"
+        icon="ri:delete-bin-line"
+        @click="removeStep(step.id)"
+      />
       <div v-if="step.stepType === 'CONDITION'" class="designer-event-step-tree__branches">
         <section v-for="branch in step.branches" :key="branch.id">
           <header><DxSvgIcon icon="ri:git-branch-line" />{{ branch.name }}</header>
@@ -44,17 +48,17 @@
       </div>
     </article>
     <ElDropdown trigger="click" @command="addStep">
-      <ElButton class="designer-event-step-tree__add" text>
-        <DxSvgIcon icon="ri:add-circle-line" />添加步骤
-      </ElButton>
+      <FormButton class="designer-event-step-tree__add" text icon="ri:add-circle-line">
+        添加步骤
+      </FormButton>
       <template #dropdown>
         <ElDropdownMenu>
-          <ElDropdownItem command="ACTION"
-            ><DxSvgIcon icon="ri:play-circle-line" />动作</ElDropdownItem
-          >
-          <ElDropdownItem command="CONDITION"
-            ><DxSvgIcon icon="ri:git-branch-line" />条件</ElDropdownItem
-          >
+          <ElDropdownItem command="ACTION">
+            <DxSvgIcon icon="ri:play-circle-line" /><span>动作</span>
+          </ElDropdownItem>
+          <ElDropdownItem command="CONDITION">
+            <DxSvgIcon icon="ri:git-branch-line" /><span>条件</span>
+          </ElDropdownItem>
         </ElDropdownMenu>
       </template>
     </ElDropdown>
@@ -63,6 +67,7 @@
 
 <script setup lang="ts">
 import DxSvgIcon from '../infrastructure/FormIcon.vue'
+import FormButton from '../infrastructure/FormButton.vue'
 import type { DesignerEventActionType, DesignerEventStep } from '@daxiangme/form-core'
 
 defineOptions({ name: 'DesignerEventStepTree' })

@@ -29,11 +29,20 @@ export interface CreateDxBpmFormAdapterOptions {
   context: FormRuntimeAdapterContext
   navigateResource?: (resourceCode: string, openInNewPage: boolean) => Promise<void>
   confirmOverwrite?: (message: string) => Promise<boolean>
-  /** 由宿主补齐关系加载、候选选择、保存状态、目录、扫码、定位与数据源等端口；关系 URL 仅由宿主解释。 */
+  /**
+   * 由宿主补齐关系、目录、扫码、定位与数据源等端口。
+   *
+   * 扫码与定位没有包内默认实现：缺少 extras.scan / extras.location 时对应控件失败关闭。
+   * 地图 Key、OCR 鉴权与扫码外壳都由宿主在 extras 实现中持有，不要写进表单配置。
+   */
   extras?: FormRuntimeAdapters
 }
 
 /** 本地预览 Adapter 的交互选项。 */
 export interface CreateLocalPreviewFormAdapterOptions {
   confirmOverwrite?: (message: string) => Promise<boolean>
+  /** 本地扫码是否就绪；缺省为就绪。 */
+  scanReady?: boolean
+  /** 扫码未就绪时展示给填报人的原因。 */
+  scanUnreadyReason?: string
 }

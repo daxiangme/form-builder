@@ -1,12 +1,14 @@
 <template>
   <div class="designer-static-control" :class="{ 'is-readonly': readonlyMode }">
     <DesignerDetailField
-      v-if="readonlyMode && appearanceMode === 'TEXT'"
+      v-if="presentsAsPlainValue"
       compact
       :field="field"
       :model-value="modelValue"
       :show-label="false"
       :show-help="false"
+      :adapters="adapters"
+      :adapter-context="adapterContext"
     />
 
     <template v-else>
@@ -200,9 +202,13 @@
         @remove="removeAsset"
         @preview="downloadAsset"
       >
-        <ElButton :loading="assetUploading" :disabled="controlDisabled || !assetAdapter">
-          <DxSvgIcon icon="ri:upload-2-line" />选择文件
-        </ElButton>
+        <FormButton
+          :loading="assetUploading"
+          :disabled="controlDisabled || !assetAdapter"
+          icon="ri:upload-2-line"
+        >
+          选择文件
+        </FormButton>
         <template #tip
           ><div class="el-upload__tip">{{ assetCapabilityTip }}</div></template
         >
@@ -257,22 +263,17 @@
         隐藏字段 · 运行时不展示
       </ElTag>
 
-      <div v-else-if="componentType === 'signature'" class="designer-static-control__serial">
-        <DesignerSignatureField
-          :model-value="signatureValue"
-          :disabled="controlDisabled"
-          :line-width="numberConfiguration('lineWidth') || 2"
-          :pen-color="textConfiguration('penColor') || '#111827'"
-          @update:model-value="updateValue"
-        />
-        <ElButton
-          v-if="booleanConfiguration('allowPersonalSignatureReuse')"
-          :disabled="controlDisabled || !adapters?.personalSignature"
+      <div v-else-if="componentType === 'signature'" class="designer-static-control__signature">
+        <DesignerSignatureSurface
+          :preview-src="signaturePreviewSrc"
+          :has-value="Boolean(signatureValue)"
+          :disabled="controlDisabled || signatureAssetBlocked"
           :loading="capabilityLoading"
-          @click="reusePersonalSignature"
-        >
-          使用个人签名
-        </ElButton>
+          @open="openSignatureDialog('field')"
+          @clear="clearSignature"
+        />
+        <small v-if="signatureAssetBlocked">资产模式需要宿主注入 adapters.asset</small>
+        <small v-else-if="mode === 'DESIGN'">设计态不打开签名弹窗，运行时点击后手写</small>
       </div>
 
       <div v-else-if="componentType === 'opinion'" class="designer-static-control__opinion">
@@ -286,14 +287,18 @@
           :disabled="controlDisabled"
           @update:model-value="updateOpinionText"
         />
-        <DesignerSignatureField
+        <DesignerSignatureSurface
           v-if="textConfiguration('mode') !== 'OPINION'"
-          :model-value="opinionSignature"
+          :preview-src="opinionSignature"
+          :has-value="Boolean(opinionSignature)"
           :disabled="controlDisabled"
-          :line-width="2"
-          pen-color="#111827"
-          @update:model-value="updateOpinionSignature"
+          :loading="capabilityLoading"
+          @open="openSignatureDialog('opinion')"
+          @clear="clearOpinionSignature"
         />
+        <small v-if="mode === 'DESIGN' && textConfiguration('mode') !== 'OPINION'">
+          设计态不打开签名弹窗，运行时点击后手写
+        </small>
         <ElTag effect="plain" type="info">审批上下文控件</ElTag>
       </div>
 
@@ -307,6 +312,7 @@
         :multiple="localPickerMultiple"
         :adapter="adapters?.directory"
         :adapter-context="adapterContext"
+        :control-radius="controlRadius"
         @update:model-value="updateValue"
         @runtime-warning="(message) => emit('runtime-warning', message)"
       />
@@ -339,25 +345,30 @@
         @update:model-value="updateValue"
       />
 
-      <ElInput
-        v-else-if="componentType === 'scan-code'"
-        :model-value="textValue"
-        :disabled="controlDisabled || !booleanConfiguration('allowManualInput')"
-        placeholder="扫码结果"
-        @update:model-value="updateValue"
-      >
-        <template #append>
-          <ElTooltip :content="adapters?.scan ? '扫描二维码或条码' : '宿主未配置扫码 Adapter'">
-            <ElButton
-              :disabled="controlDisabled || !adapters?.scan"
-              aria-label="扫码"
-              @click="scanCode"
-            >
-              <DxSvgIcon icon="ri:qr-scan-2-line" />
-            </ElButton>
-          </ElTooltip>
-        </template>
-      </ElInput>
+      <div v-else-if="componentType === 'scan-code'" class="designer-static-control__scan">
+        <ElInput
+          :model-value="textValue"
+          :disabled="
+            controlDisabled ||
+            (!booleanConfiguration('allowManualInput') &&
+              !booleanConfiguration('allowModification'))
+          "
+          placeholder="扫码结果"
+          @update:model-value="updateValue"
+        >
+          <template #append>
+            <ElTooltip :content="scanButtonTip">
+              <FormButton
+                :disabled="controlDisabled || !adapters?.scan || !scanReady"
+                aria-label="扫码"
+                icon="ri:qr-scan-2-line"
+                @click="scanCode"
+              />
+            </ElTooltip>
+          </template>
+        </ElInput>
+        <small v-if="scanUnreadyReason" class="el-upload__tip">{{ scanUnreadyReason }}</small>
+      </div>
 
       <div v-else-if="componentType === 'ocr'" class="designer-static-control__ocr">
         <ElUpload
@@ -366,29 +377,61 @@
           :disabled="controlDisabled || !adapters?.ocr"
           @change="recognizeImage"
         >
-          <ElButton :disabled="controlDisabled || !adapters?.ocr" :loading="capabilityLoading">
-            <DxSvgIcon icon="ri:image-add-line" />选择识别图片
-          </ElButton>
+          <FormButton
+            :disabled="controlDisabled || !adapters?.ocr"
+            :loading="capabilityLoading"
+            icon="ri:image-add-line"
+          >
+            选择识别图片
+          </FormButton>
           <template #tip>
-            <div class="el-upload__tip">
-              {{ adapters?.ocr ? '识别结果由 OCR Adapter 返回' : '宿主未配置 OCR Adapter' }}
-            </div>
+            <div class="el-upload__tip">{{ ocrCapabilityTip }}</div>
           </template>
         </ElUpload>
+        <ElInput
+          v-if="ocrResultText"
+          type="textarea"
+          :model-value="ocrResultText"
+          :rows="4"
+          :disabled="controlDisabled || !booleanConfiguration('allowResultEditing')"
+          @update:model-value="updateOcrResultText"
+        />
       </div>
 
       <div v-else-if="componentType === 'position'" class="designer-static-control__position">
-        <ElInput :model-value="positionSummary" disabled />
-        <ElButton
-          :disabled="controlDisabled || !adapters?.location"
-          :loading="capabilityLoading"
-          @click="locatePosition"
+        <ElInput
+          :model-value="positionAddressText"
+          :placeholder="positionPlaceholder"
+          readonly
+          :disabled="controlDisabled"
         >
-          <DxSvgIcon icon="ri:map-pin-line" />获取位置
-        </ElButton>
-        <small>{{
-          adapters?.location ? '运行时保存受控定位结果' : '宿主未配置定位 Adapter'
-        }}</small>
+          <template #append>
+            <ElTooltip :content="positionActionTip">
+              <FormButton
+                :disabled="positionActionDisabled"
+                :loading="capabilityLoading"
+                :aria-label="positionActionLabel"
+                :icon="positionActionIcon"
+                @click="runPositionAction"
+              >
+                {{ positionActionLabel }}
+              </FormButton>
+            </ElTooltip>
+          </template>
+        </ElInput>
+        <small v-if="positionCapabilityTip">{{ positionCapabilityTip }}</small>
+        <DesignerLocationPickerDialog
+          v-model="locationPickerVisible"
+          :field="field"
+          :adapters="adapters"
+          :adapter-context="adapterContext"
+          :initial="locationInitialValue"
+          :default-center="parseDefaultCenter(textConfiguration('defaultCenter'))"
+          :requested-fields="locationOutputFields()"
+          :control-radius="controlRadius"
+          @confirm="applyLocationValue"
+          @runtime-warning="emit('runtime-warning', $event)"
+        />
       </div>
 
       <div
@@ -417,28 +460,59 @@
         <ElButton disabled>{{ componentName }}不可用</ElButton>
         <small>{{ componentName }}缺少独立渲染器，已失败关闭且不能回退为文本框</small>
       </div>
+
+      <DesignerSignatureDialog
+        v-if="
+          componentType === 'signature' ||
+          (componentType === 'opinion' && textConfiguration('mode') !== 'OPINION')
+        "
+        v-model="signatureDialogVisible"
+        :field="field"
+        :adapters="adapters"
+        :adapter-context="adapterContext"
+        :control-radius="controlRadius"
+        :initial-value="signatureDialogInitialValue"
+        :preview-src="signatureDialogPreviewSrc"
+        :line-width="signatureDialogLineWidth"
+        :pen-color="signatureDialogPenColor"
+        :allow-personal-signature="signatureDialogAllowPersonal"
+        @confirm="confirmSignatureDialog"
+        @runtime-warning="emit('runtime-warning', $event)"
+      />
     </template>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { CascaderOption, UploadFile, UploadUserFile } from 'element-plus'
 import DxSvgIcon from '../infrastructure/FormIcon.vue'
+import FormButton from '../infrastructure/FormButton.vue'
 import { findDesignerComponent } from '@daxiangme/form-core'
 import { formatDesignerNumber, resolveDesignerNumberPrecision } from '@daxiangme/form-core'
+import {
+  cropFormLocationValue,
+  FORM_LOCATION_DEFAULT_OUTPUT_FIELDS,
+  isFormLocationField,
+} from '@daxiangme/form-core'
+import DesignerLocationPickerDialog from './DesignerLocationPickerDialog.vue'
 import type {
   DesignerField,
   DesignerOption,
+  DesignerRadiusValue,
   DesignerRuntimeAdapters,
   DesignerRuntimeMode,
   FormAssetAdapter,
   FormAssetReference,
+  FormLocationField,
+  FormLocationValue,
   FormRuntimeAdapterContext,
+  FormScanReadiness,
 } from '@daxiangme/form-core'
 import DxStepProgress from '../form/controls/DxStepProgress.vue'
 import DesignerDetailField from './DesignerDetailField.vue'
-import DesignerSignatureField from './DesignerSignatureField.vue'
+import DesignerSignatureDialog from './DesignerSignatureDialog.vue'
+import DesignerSignatureSurface from './DesignerSignatureSurface.vue'
 import DesignerLocalPickerField from './DesignerLocalPickerField.vue'
 
 defineOptions({ name: 'DesignerStaticControl' })
@@ -451,12 +525,16 @@ const props = withDefaults(
     appearanceMode?: 'CONTROL' | 'TEXT'
     adapters?: DesignerRuntimeAdapters
     adapterContext?: FormRuntimeAdapterContext
+    fieldValues?: Record<string, unknown>
+    /** 表单控件圆角，选点等弹窗外壳与全局圆角对齐。 */
+    controlRadius?: DesignerRadiusValue
   }>(),
-  { appearanceMode: 'CONTROL', adapterContext: () => ({}) },
+  { appearanceMode: 'CONTROL', adapterContext: () => ({}), fieldValues: () => ({}) },
 )
 
 const emit = defineEmits<{
   'update:modelValue': [value: unknown]
+  'apply-field-assignments': [source: Record<string, unknown>]
   'runtime-warning': [message: string]
 }>()
 const optionLoading = ref(false)
@@ -467,6 +545,26 @@ const registration = computed(() => findDesignerComponent(props.field.componentT
 const componentType = computed(() => props.field.componentType)
 const componentName = computed(() => registration.value?.name ?? props.field.componentType)
 const componentIcon = computed(() => registration.value?.icon ?? 'ri:error-warning-line')
+const localPickerTypes = [
+  'user',
+  'role',
+  'organization',
+  'post',
+  'custom-data',
+  'process-reference',
+  'form-reference',
+  'data-dialog',
+]
+const ACTION_FIELD_TYPES = new Set([
+  'file',
+  'signature',
+  'opinion',
+  'scan-code',
+  'ocr',
+  'position',
+  'rich-text',
+  ...localPickerTypes,
+])
 const controlDisabled = computed(
   () =>
     props.mode === 'DESIGN' ||
@@ -474,7 +572,15 @@ const controlDisabled = computed(
     props.mode === 'DETAIL' ||
     props.field.display.readonly,
 )
+/** 整表只读或字段已锁定时去掉采集、上传、选点等操作入口。设计态仍展示按钮便于对照。 */
+const hideActions = computed(() => controlDisabled.value && props.mode !== 'DESIGN')
 const readonlyMode = computed(() => props.mode === 'READ_ONLY' || props.field.display.readonly)
+/** 整表只读且配置为纯文本，或只读下的采集/选择类字段，改为详情内容。 */
+const presentsAsPlainValue = computed(
+  () =>
+    (readonlyMode.value && props.appearanceMode === 'TEXT') ||
+    (hideActions.value && ACTION_FIELD_TYPES.has(componentType.value)),
+)
 const placeholder = computed(
   () => props.field.display.placeholder || textConfiguration('placeholder') || '请输入',
 )
@@ -519,16 +625,6 @@ const options = computed<DesignerOption[]>(() =>
 const cascaderOptions = computed<CascaderOption[]>(() =>
   normalizeOptions(props.field.configuration.options).map(toCascaderOption),
 )
-const localPickerTypes = [
-  'user',
-  'role',
-  'organization',
-  'post',
-  'custom-data',
-  'process-reference',
-  'form-reference',
-  'data-dialog',
-]
 const localPickerMultiple = computed(() => textConfiguration('selectionMode') === 'MULTIPLE')
 const regionOptions = computed<CascaderOption[]>(() =>
   remoteRegionOptions.value.length
@@ -580,9 +676,101 @@ const opinionSignature = computed(() => {
 const signatureValue = computed(() =>
   typeof props.modelValue === 'string' ? props.modelValue : '',
 )
+const signatureUsesAsset = computed(() => textConfiguration('storageMode') === 'ASSET')
+const signatureAssetBlocked = computed(
+  () => signatureUsesAsset.value && props.mode !== 'DESIGN' && !assetAdapter.value,
+)
+const scanReady = ref(true)
+const scanUnreadyReason = ref('')
+const scanButtonTip = computed(() => {
+  if (!props.adapters?.scan) return '宿主未配置扫码 Adapter'
+  if (!scanReady.value) return scanUnreadyReason.value || '扫码设备未就绪'
+  return '扫描二维码或条码'
+})
+const positionCapabilityTip = computed(() => {
+  if (props.mode === 'DESIGN') return '设计态不打开地图，运行时由宿主定位 Adapter 接管'
+  if (!props.adapters?.location) return '宿主未配置定位 Adapter'
+  if (
+    booleanConfiguration('allowManualPick') &&
+    !props.adapters.location.pick &&
+    !props.adapters.location.bindPicker
+  ) {
+    return '当前宿主只支持获取当前位置，未提供地图选点'
+  }
+  return ''
+})
+const positionUsesPick = computed(() => booleanConfiguration('allowManualPick'))
+const positionActionLabel = computed(() => (positionUsesPick.value ? '地图选点' : '获取位置'))
+const positionActionIcon = computed(() =>
+  positionUsesPick.value ? 'ri:map-2-line' : 'ri:map-pin-line',
+)
+const positionActionTip = computed(() => {
+  if (props.mode === 'DESIGN') {
+    return positionUsesPick.value ? '运行时点击后打开地图选点' : '运行时获取当前位置'
+  }
+  if (!props.adapters?.location) return '宿主未配置定位 Adapter'
+  if (
+    positionUsesPick.value &&
+    !props.adapters.location.pick &&
+    !props.adapters.location.bindPicker
+  ) {
+    return '当前宿主只支持获取当前位置'
+  }
+  return positionUsesPick.value ? '打开地图选择位置' : '获取当前位置'
+})
+const positionActionDisabled = computed(
+  () => controlDisabled.value || capabilityLoading.value || !props.adapters?.location,
+)
+const locationPickerVisible = ref(false)
+const signatureDialogVisible = ref(false)
+const signatureDialogKind = ref<'field' | 'opinion'>('field')
+const locationInitialValue = computed(() =>
+  isLocationValue(props.modelValue) ? props.modelValue : undefined,
+)
+const positionPlaceholder = '请选择位置'
+const positionAddressText = computed(() => {
+  if (typeof props.modelValue !== 'object' || props.modelValue === null) return ''
+  const value = props.modelValue as Record<string, unknown>
+  const address = typeof value.address === 'string' ? value.address.trim() : ''
+  if (address) return address
+  const name = typeof value.name === 'string' ? value.name.trim() : ''
+  if (name) return name
+  if (!booleanConfiguration('showCoordinates')) return ''
+  if (value.longitude == null || value.latitude == null) return ''
+  return `${value.longitude}, ${value.latitude}`
+})
+const ocrCapabilityTip = computed(() => {
+  if (!props.adapters?.ocr) return '宿主未配置 OCR Adapter'
+  return booleanConfiguration('retainOriginal')
+    ? '识别结果由 OCR Adapter 返回；勾选保留原图时会额外上传图片'
+    : '识别结果由 OCR Adapter 返回'
+})
+let unsubscribeScan: (() => void) | undefined
 const resolvedAssets = ref<FormAssetReference[]>([])
 const assetUploading = ref(false)
 const capabilityLoading = ref(false)
+const signaturePreviewSrc = computed(() => {
+  if (signatureValue.value.startsWith('data:image/')) return signatureValue.value
+  if (/^(https?:|blob:)/i.test(signatureValue.value)) return signatureValue.value
+  const asset = resolvedAssets.value.find((item) => item.assetId === signatureValue.value)
+  return asset?.downloadUrl ?? ''
+})
+const signatureDialogInitialValue = computed(() =>
+  signatureDialogKind.value === 'opinion' ? opinionSignature.value : signatureValue.value,
+)
+const signatureDialogPreviewSrc = computed(() =>
+  signatureDialogKind.value === 'opinion' ? opinionSignature.value : signaturePreviewSrc.value,
+)
+const signatureDialogLineWidth = computed(() =>
+  signatureDialogKind.value === 'opinion' ? 2 : numberConfiguration('lineWidth') || 2,
+)
+const signatureDialogPenColor = computed(() =>
+  signatureDialogKind.value === 'opinion' ? '#111827' : textConfiguration('penColor') || '#111827',
+)
+const signatureDialogAllowPersonal = computed(
+  () =>
+    signatureDialogKind.value === 'field' && booleanConfiguration('allowPersonalSignatureReuse'),
+)
 const assetIds = computed(() => normalizeAssetIds(props.modelValue))
 const fileList = computed<UploadUserFile[]>(() => {
   return assetIds.value.map((assetId, index) => {
@@ -602,11 +790,13 @@ const assetCapabilityTip = computed(() => {
     ? '文件将通过宿主注入的资产 Adapter 上传，表单值仅保存 assetId'
     : '宿主未配置文件能力，上传已禁用'
 })
-const positionSummary = computed(() => {
-  if (typeof props.modelValue !== 'object' || props.modelValue === null) return '经度 — / 纬度 —'
-  const value = props.modelValue as Record<string, unknown>
-  const address = typeof value.address === 'string' && value.address ? ` / ${value.address}` : ''
-  return `经度 ${String(value.longitude ?? '—')} / 纬度 ${String(value.latitude ?? '—')}${address}`
+const ocrResultText = computed(() => {
+  if (typeof props.modelValue !== 'object' || props.modelValue === null) return ''
+  try {
+    return JSON.stringify(props.modelValue, null, 2)
+  } catch {
+    return ''
+  }
 })
 const numberSummary = computed(() => {
   if (numberValue.value === null) return ''
@@ -659,6 +849,38 @@ function updateOpinionSignature(value: string): void {
   const source =
     typeof props.modelValue === 'object' && props.modelValue !== null ? props.modelValue : {}
   emit('update:modelValue', { ...source, signature: value })
+}
+
+function openSignatureDialog(kind: 'field' | 'opinion'): void {
+  if (controlDisabled.value) return
+  if (kind === 'field' && signatureAssetBlocked.value) return
+  signatureDialogKind.value = kind
+  signatureDialogVisible.value = true
+}
+
+function clearSignature(): void {
+  void updateSignature('')
+}
+
+function clearOpinionSignature(): void {
+  updateOpinionSignature('')
+}
+
+async function confirmSignatureDialog(payload: {
+  value: string
+  asset?: FormAssetReference
+}): Promise<void> {
+  if (signatureDialogKind.value === 'opinion') {
+    updateOpinionSignature(payload.value)
+    return
+  }
+  if (payload.asset) {
+    resolvedAssets.value = [
+      ...resolvedAssets.value.filter((item) => item.assetId !== payload.asset?.assetId),
+      payload.asset,
+    ]
+  }
+  await updateSignature(payload.value)
 }
 
 function updateRichText(event: Event): void {
@@ -723,8 +945,16 @@ async function downloadAsset(file: UploadFile): Promise<void> {
   }
 }
 
-/** 新协议只输出 assetId；旧对象值只在内存中读取兼容字段。 */
+/** 新协议只输出 assetId；旧对象值只在内存中读取兼容字段。签名资产模式把字符串值当作 assetId。 */
 function normalizeAssetIds(value: unknown): string[] {
+  if (
+    signatureUsesAsset.value &&
+    typeof value === 'string' &&
+    value.trim() &&
+    !value.startsWith('data:')
+  ) {
+    return [value]
+  }
   if (!Array.isArray(value)) return []
   return value.flatMap((item) => {
     if (typeof item === 'string' && item.trim()) return [item]
@@ -742,11 +972,41 @@ onMounted(() => {
   void loadRemoteCatalogs()
 })
 
+onBeforeUnmount(() => {
+  unsubscribeScan?.()
+})
+
 watch(
   () => [props.field.id, props.adapters, componentType.value],
   () => {
     void loadRemoteCatalogs()
   },
+)
+
+watch(
+  () => props.adapters?.scan,
+  (adapter) => {
+    unsubscribeScan?.()
+    unsubscribeScan = undefined
+    if (!adapter) {
+      scanReady.value = true
+      scanUnreadyReason.value = ''
+      return
+    }
+    const apply = (state: FormScanReadiness) => {
+      scanReady.value = state.ready
+      scanUnreadyReason.value = state.ready ? '' : (state.unreadyReason ?? '扫码设备未就绪')
+    }
+    if (adapter.readiness) apply(adapter.readiness({ context: props.adapterContext }))
+    else {
+      scanReady.value = true
+      scanUnreadyReason.value = ''
+    }
+    if (adapter.subscribeReadiness) {
+      unsubscribeScan = adapter.subscribeReadiness(apply, { context: props.adapterContext })
+    }
+  },
+  { immediate: true },
 )
 
 /** 加载动态选项、地区树和已选值回显；缺少 Adapter 时保留静态配置并警告。 */
@@ -835,32 +1095,18 @@ async function updateDateRange(value: unknown): Promise<void> {
   }
 }
 
-/** 复用账户中心个人签名；缺少 Adapter 时失败关闭。 */
-async function reusePersonalSignature(): Promise<void> {
-  const adapter = props.adapters?.personalSignature
-  if (!adapter || controlDisabled.value) {
-    emit('runtime-warning', '当前宿主未提供个人签名 Adapter')
-    return
-  }
-  capabilityLoading.value = true
+async function scanCode(): Promise<void> {
+  if (!props.adapters?.scan || controlDisabled.value || !scanReady.value) return
   try {
-    const asset = await adapter.reuse({
+    const formats = stringArrayConfiguration('formats')
+    const parameterFieldId = textConfiguration('scanParameterFieldId')
+    const result = await props.adapters.scan.scan({
       fieldId: props.field.id,
       fieldCode: props.field.key,
+      formats: formats.length ? formats : undefined,
+      parameter: parameterFieldId ? props.fieldValues?.[parameterFieldId] : undefined,
       context: props.adapterContext,
     })
-    updateValue(asset.assetId)
-  } catch (error) {
-    reportAssetFailure(error, '个人签名复用失败')
-  } finally {
-    capabilityLoading.value = false
-  }
-}
-
-async function scanCode(): Promise<void> {
-  if (!props.adapters?.scan || controlDisabled.value) return
-  try {
-    const result = await props.adapters.scan.scan({ context: props.adapterContext })
     updateValue(result.text)
   } catch (error) {
     reportAssetFailure(error, '扫码失败')
@@ -878,7 +1124,23 @@ async function recognizeImage(file: UploadFile): Promise<void> {
       provider: textConfiguration('provider') || undefined,
       context: props.adapterContext,
     })
-    updateValue(result)
+    const payload: Record<string, unknown> = { ...result }
+    if (booleanConfiguration('retainOriginal')) {
+      if (!assetAdapter.value) {
+        emit('runtime-warning', '保留原图需要宿主注入 adapters.asset')
+      } else {
+        const asset = await assetAdapter.value.upload({
+          file: file.raw,
+          fieldId: props.field.id,
+          fieldCode: props.field.key,
+          policyRef: textConfiguration('assetPolicyRef') || undefined,
+          context: props.adapterContext,
+        })
+        payload.originalAssetId = asset.assetId
+      }
+    }
+    updateValue(payload)
+    emit('apply-field-assignments', payload)
   } catch (error) {
     reportAssetFailure(error, 'OCR 识别失败')
   } finally {
@@ -886,17 +1148,155 @@ async function recognizeImage(file: UploadFile): Promise<void> {
   }
 }
 
+async function runPositionAction(): Promise<void> {
+  if (booleanConfiguration('allowManualPick') && props.adapters?.location?.bindPicker) {
+    locationPickerVisible.value = true
+    return
+  }
+  if (booleanConfiguration('allowManualPick') && props.adapters?.location?.pick) {
+    await pickPosition()
+    return
+  }
+  await locatePosition()
+}
+
 async function locatePosition(): Promise<void> {
   if (!props.adapters?.location || controlDisabled.value || capabilityLoading.value) return
   capabilityLoading.value = true
   try {
-    const result = await props.adapters.location.locate({ context: props.adapterContext })
-    updateValue({ ...result, collectedAt: new Date().toISOString() })
+    const result = await props.adapters.location.locate({
+      enableHighAccuracy: booleanConfiguration('enableHighAccuracy'),
+      timeoutMilliseconds: numberConfiguration('timeout') || undefined,
+      context: props.adapterContext,
+    })
+    applyLocationValue({
+      ...result,
+      source: result.source ?? 'CURRENT',
+      collectedAt: result.collectedAt ?? new Date().toISOString(),
+    })
   } catch (error) {
     reportAssetFailure(error, '定位失败')
   } finally {
     capabilityLoading.value = false
   }
+}
+
+async function pickPosition(): Promise<void> {
+  const pick = props.adapters?.location?.pick
+  if (!pick || controlDisabled.value || capabilityLoading.value) return
+  capabilityLoading.value = true
+  try {
+    const result = await pick({
+      fieldId: props.field.id,
+      fieldCode: props.field.key,
+      provider: textConfiguration('mapProvider') || undefined,
+      initial: isLocationValue(props.modelValue) ? props.modelValue : undefined,
+      defaultCenter: parseDefaultCenter(textConfiguration('defaultCenter')),
+      requestedFields: locationOutputFields(),
+      context: props.adapterContext,
+    })
+    if (!result) return
+    applyLocationValue({ ...result, source: result.source ?? 'PICK' })
+  } catch (error) {
+    reportAssetFailure(error, '地图选点失败')
+  } finally {
+    capabilityLoading.value = false
+  }
+}
+
+async function updateSignature(dataUrl: string): Promise<void> {
+  if (controlDisabled.value) return
+  if (!signatureUsesAsset.value) {
+    updateValue(dataUrl)
+    return
+  }
+  if (!dataUrl) {
+    updateValue('')
+    return
+  }
+  if (!dataUrl.startsWith('data:')) {
+    updateValue(dataUrl)
+    return
+  }
+  const adapter = assetAdapter.value
+  if (!adapter) {
+    emit('runtime-warning', '资产模式需要宿主注入 adapters.asset')
+    return
+  }
+  capabilityLoading.value = true
+  try {
+    const asset = await adapter.upload({
+      file: dataUrlToFile(dataUrl, `${props.field.key || 'signature'}.png`),
+      fieldId: props.field.id,
+      fieldCode: props.field.key,
+      policyRef: textConfiguration('assetPolicyRef') || undefined,
+      context: props.adapterContext,
+    })
+    resolvedAssets.value = [
+      ...resolvedAssets.value.filter((item) => item.assetId !== asset.assetId),
+      asset,
+    ]
+    updateValue(asset.assetId)
+  } catch (error) {
+    reportAssetFailure(error, '签名上传失败')
+  } finally {
+    capabilityLoading.value = false
+  }
+}
+
+function updateOcrResultText(value: string): void {
+  if (controlDisabled.value || !booleanConfiguration('allowResultEditing')) return
+  try {
+    const parsed: unknown = JSON.parse(value)
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      emit('runtime-warning', '识别结果必须是对象')
+      return
+    }
+    updateValue(parsed)
+  } catch {
+    emit('runtime-warning', '识别结果不是合法 JSON')
+  }
+}
+
+function applyLocationValue(result: FormLocationValue): void {
+  updateValue(cropFormLocationValue(result, locationOutputFields()))
+  emit('apply-field-assignments', { ...result })
+}
+
+function locationOutputFields(): FormLocationField[] {
+  const configured = stringArrayConfiguration('outputFields').filter(isFormLocationField)
+  return configured.length ? configured : [...FORM_LOCATION_DEFAULT_OUTPUT_FIELDS]
+}
+
+function stringArrayConfiguration(key: string): string[] {
+  const value = props.field.configuration[key]
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string')
+    : []
+}
+
+function parseDefaultCenter(value: string): { longitude: number; latitude: number } | undefined {
+  const parts = value
+    .split(/[,，\s]+/u)
+    .map((item) => Number(item))
+    .filter((item) => Number.isFinite(item))
+  if (parts.length < 2) return undefined
+  return { longitude: parts[0]!, latitude: parts[1]! }
+}
+
+function isLocationValue(value: unknown): value is FormLocationValue {
+  if (typeof value !== 'object' || value === null) return false
+  const source = value as Record<string, unknown>
+  return typeof source.longitude === 'number' && typeof source.latitude === 'number'
+}
+
+function dataUrlToFile(dataUrl: string, fileName: string): File {
+  const [header, body] = dataUrl.split(',')
+  const mime = /data:([^;]+)/u.exec(header ?? '')?.[1] ?? 'image/png'
+  const binary = atob(body ?? '')
+  const bytes = new Uint8Array(binary.length)
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index)
+  return new File([bytes], fileName, { type: mime })
 }
 
 function textConfiguration(key: string): string {
@@ -1012,11 +1412,34 @@ function toCascaderOption(option: DesignerOption): CascaderOption {
   font-size: 12px;
 }
 
+.designer-static-control__signature small {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
 .designer-static-control__serial,
+.designer-static-control__signature,
 .designer-static-control__opinion,
+.designer-static-control__ocr,
+.designer-static-control__scan,
 .designer-static-control__position {
   display: grid;
   gap: var(--daxiang-form-space-2);
+}
+
+.designer-static-control__position small,
+.designer-static-control__ocr .el-upload {
+  grid-column: 1 / -1;
+}
+
+.designer-static-control__position :deep(.el-input-group__append) {
+  padding: 0;
+}
+
+.designer-static-control__position :deep(.el-input-group__append .el-button) {
+  margin: 0;
+  border: none;
+  border-radius: 0;
 }
 
 .designer-static-control__code-preview {
@@ -1029,13 +1452,5 @@ function toCascaderOption(option: DesignerOption): CascaderOption {
 .designer-static-control__code-preview > :first-child,
 .designer-static-control__upload-icon {
   font-size: 28px;
-}
-
-.designer-static-control__position {
-  grid-template-columns: minmax(0, 1fr) auto;
-}
-
-.designer-static-control__position small {
-  grid-column: 1 / -1;
 }
 </style>

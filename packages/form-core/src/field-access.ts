@@ -95,6 +95,26 @@ export function isDesignerFieldUserWritable(options: {
 }
 
 /**
+ * 判断字段是否应按详情内容呈现，而不是输入控件。
+ *
+ * 整表 `DETAIL` 始终走详情。新增/编辑下仅当宿主字段权限为 `READ_ONLY` 时走详情；
+ * 整表 `READ_ONLY` 仍保留表单骨架，由渲染层去掉操作按钮。
+ *
+ * @param options.mode 运行模式
+ * @param options.accessLevel 宿主访问级别
+ */
+export function isDesignerFieldDetailPresentation(options: {
+  mode: DesignerRuntimeMode
+  accessLevel?: FormFieldAccessLevel
+}): boolean {
+  if (options.mode === 'DETAIL') return true
+  if (options.mode === 'CREATE' || options.mode === 'EDIT') {
+    return options.accessLevel === 'READ_ONLY'
+  }
+  return false
+}
+
+/**
  * 判断事件动作是否针对具体字段执行写入。
  *
  * @param actionType 事件动作类型
@@ -125,7 +145,10 @@ export function readDesignerFieldRuntimePolicy(
   if (!isRecord(policy) || !isDesignerFieldAccessLevel(policy.accessLevel)) {
     return { accessLevel: 'HIDDEN' }
   }
-  return { accessLevel: policy.accessLevel }
+  return {
+    accessLevel: policy.accessLevel,
+    required: policy.required === true ? true : undefined,
+  }
 }
 
 /**
@@ -133,8 +156,9 @@ export function readDesignerFieldRuntimePolicy(
  *
  * 未传策略时按独立表单 Schema 工作。传入策略后访问级别为权威投影，公式只能继续收紧，不能放宽宿主权限。
  *
- * 优先级：模式限制 → 宿主隐藏 → 宿主只读 → 文档状态收紧 → 公式只读。
- * 权限只能收紧：设计时隐藏或只读的字段，运行时传入可编辑无效。必填只来自设计文档，隐藏或只读时自动取消。
+ * 优先级：模式限制 → 宿主隐藏 → 宿主只读 → 文档状态收紧 → 宿主强制必填 → 公式只读。
+ * 权限只能收紧：设计时隐藏或只读的字段，运行时传入可编辑无效。
+ * 必填来自设计文档，也可由宿主 `required: true` 加严；隐藏或只读时自动取消。
  *
  * @param field 当前字段
  * @param documentState 文档条件规则解析后的状态
@@ -165,6 +189,9 @@ export function applyDesignerFieldAccess(
   }
   if (formulaLocked) {
     disabled = true
+  }
+  if (options.policy?.required === true) {
+    required = true
   }
   if (!visible) {
     required = false

@@ -35,25 +35,23 @@
         </button>
         <div>
           <ElTooltip content="复制模块">
-            <ElButton
+            <FormButton
               text
               circle
               aria-label="复制模块"
+              icon="ri:file-copy-line"
               @click.stop="emit('duplicate', module.code)"
-            >
-              <DxSvgIcon icon="ri:file-copy-line" />
-            </ElButton>
+            />
           </ElTooltip>
           <ElTooltip content="删除模块">
-            <ElButton
+            <FormButton
               text
               circle
               type="danger"
               aria-label="删除模块"
+              icon="ri:delete-bin-line"
               @click.stop="emit('delete', module.code)"
-            >
-              <DxSvgIcon icon="ri:delete-bin-line" />
-            </ElButton>
+            />
           </ElTooltip>
         </div>
       </article>
@@ -64,18 +62,17 @@
       />
       <footer class="designer-module-manager__add">
         <ElDropdown trigger="click" @command="addModule">
-          <ElButton text>
-            <DxSvgIcon icon="ri:add-line" />
+          <FormButton text icon="ri:add-line">
             添加模块
             <DxSvgIcon icon="ri:arrow-down-s-line" />
-          </ElButton>
+          </FormButton>
           <template #dropdown>
             <ElDropdownMenu>
               <ElDropdownItem command="DIALOG">
-                <DxSvgIcon icon="ri:window-line" />弹窗
+                <DxSvgIcon icon="ri:window-line" /><span>弹窗</span>
               </ElDropdownItem>
               <ElDropdownItem command="DRAWER">
-                <DxSvgIcon icon="ri:layout-right-2-line" />抽屉
+                <DxSvgIcon icon="ri:layout-right-2-line" /><span>抽屉</span>
               </ElDropdownItem>
             </ElDropdownMenu>
           </template>
@@ -87,6 +84,7 @@
 
 <script setup lang="ts">
 import DxSvgIcon from '../infrastructure/FormIcon.vue'
+import FormButton from '../infrastructure/FormButton.vue'
 import type { DesignerDocument, DesignerOverlayModule } from '@daxiangme/form-core'
 
 defineOptions({ name: 'DesignerModuleManager' })

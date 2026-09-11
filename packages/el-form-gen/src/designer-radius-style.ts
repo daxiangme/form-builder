@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'vue'
-import { designerRadiusCssValue } from '@daxiangme/form-core'
+import { designerRadiusCssValue, DESIGNER_DIALOG_DEFAULT_RADIUS_PX } from '@daxiangme/form-core'
 import type { DesignerRadiusValue } from '@daxiangme/form-core'
 
 /** 控件圆角自定义像素时挂到表单根上的主题类。 */
@@ -23,16 +23,21 @@ export function designerControlRadiusBind(radius: DesignerRadiusValue): {
 }
 
 /**
- * 将弹窗圆角写入外壳：跟随系统继续消费 `--el-border-radius-base`。
+ * 将弹窗圆角写入外壳。
+ *
+ * 未指定或跟随系统时使用 16px；自定义像素原样写入。
  */
 export function designerDialogRadiusBind(radius: DesignerRadiusValue | undefined): {
   class: string
   style: CSSProperties
 } {
-  const value = radius ?? 'THEME'
-  if (value === 'THEME') return { class: '', style: {} }
+  const value =
+    radius === undefined || radius === 'THEME' ? DESIGNER_DIALOG_DEFAULT_RADIUS_PX : radius
   return {
     class: DESIGNER_DIALOG_RADIUS_CUSTOM_CLASS,
-    style: { '--daxiang-form-dialog-radius': designerRadiusCssValue(value) },
+    style: {
+      '--daxiang-form-dialog-radius': designerRadiusCssValue(value),
+      '--el-dialog-border-radius': designerRadiusCssValue(value),
+    },
   }
 }

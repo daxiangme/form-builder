@@ -123,29 +123,31 @@ async function save(batch: DesignerSubmissionBatch): Promise<void> {
 
 ## 权限投影
 
-继续使用以字段 ID 为键的 `fieldRuntimePolicy`，每项只有 `accessLevel: 'EDITABLE' | 'READ_ONLY' | 'HIDDEN'`。设计文档不保存权限；必填由设计配置决定，运行策略不能临时把字段变成必填。只读和隐藏始终取消必填：不显示红星、不跑必填校验、不进入用户提交。
+继续使用以字段 ID 为键的 `fieldRuntimePolicy`，每项有 `accessLevel: 'EDITABLE' | 'READ_ONLY' | 'HIDDEN'`，以及可选的 `required?: boolean`。设计文档不保存权限。必填来自设计配置，宿主 `required: true` 只能加严；`false` 与缺省均忽略。只读和隐藏始终取消必填：不显示红星、不跑必填校验、不进入用户提交。
 
 未传映射时字段默认可编辑，文档 `required` 按 Schema 生效。传入映射后（包括 `{}`）键缺失走 `fieldRuntimePolicyFallback`，默认 `HIDDEN`；非法 `accessLevel` 仍按 `HIDDEN` 失败关闭，不会被 fallback 放宽。权限只能收紧：设计时隐藏或只读的字段，运行时传入可编辑无效。
 
-完整投影时应固定 `fieldRuntimePolicyFallback: 'HIDDEN'`，并补齐表单所有字段。不同场景的必填差异换该场景自己的设计文档，不要把必填写进策略。公开契约仍允许 `EDITABLE` fallback，只给「只传关心的字段」的部分投影使用。
+完整投影时应固定 `fieldRuntimePolicyFallback: 'HIDDEN'`，并补齐表单所有字段。公开契约仍允许 `EDITABLE` fallback，只给「只传关心的字段」的部分投影使用。BPM 的 `permission='b'` 对应 `accessLevel: 'EDITABLE'` 加 `required: true`。
 
 同一份设计文档里金额字段 `required: true` 时，三种访问级别的表现如下。红星来自解析后的 `readFieldState(...).required`，不是策略里的第四个值。
 
 | `accessLevel` | 渲染     | 红星 / 必填校验 | 用户提交   |
-| ------------- | -------- | -------------- | ---------- |
-| `EDITABLE`          | 可编辑   | 生效           | 按提交策略 |
-| `READ_ONLY`         | 只展示   | 不校验         | 不提交     |
-| `HIDDEN`            | 不渲染   | 不校验         | 不提交     |
+| ------------- | -------- | --------------- | ---------- |
+| `EDITABLE`    | 可编辑   | 生效            | 按提交策略 |
+| `READ_ONLY`   | 详情内容 | 不校验          | 不提交     |
+| `HIDDEN`      | 不渲染   | 不校验          | 不提交     |
+
+整表 `READ_ONLY` 保留表单骨架并去掉操作按钮；新增/编辑下的字段 `READ_ONLY` 按详情内容展示。整表 `DETAIL` 为详情页。
 
 ```ts
-// 可编辑：amount 可改，文档 required 生效
+// 可编辑：amount 可改，文档必填与宿主 required: true 都生效
 const session = createDesignerRuntimeSession({
   document,
   mode: 'EDIT',
   fieldRuntimePolicyFallback: 'HIDDEN',
   fieldRuntimePolicy: {
     [titleFieldId]: { accessLevel: 'EDITABLE' },
-    [amountFieldId]: { accessLevel: 'EDITABLE' },
+    [amountFieldId]: { accessLevel: 'EDITABLE', required: true },
     [commentFieldId]: { accessLevel: 'HIDDEN' },
   },
 })
@@ -174,9 +176,9 @@ session.updateRuntimePolicy({
 传入策略后，**未出现在映射里的字段**按 fallback 处理，与上表同一套可见 / 必填 / 提交规则：
 
 | `fieldRuntimePolicyFallback` | 未列出且文档 `required: true` 的字段 |
-| ----------------------------- | ------------------------------------ |
-| `HIDDEN`（默认）              | 隐藏，不校验，不提交                 |
-| `EDITABLE`                    | 按文档可编辑，继承必填，按提交策略    |
+| ---------------------------- | ------------------------------------ |
+| `HIDDEN`（默认）             | 隐藏，不校验，不提交                 |
+| `EDITABLE`                   | 按文档可编辑，继承必填，按提交策略   |
 
 按场景裁剪字段时应走完整投影：策略里补齐表单所有字段，漏传即隐藏。只传做过特殊控制的字段时，必须显式设 `fieldRuntimePolicyFallback: 'EDITABLE'`，此时未列出字段会继承设计文档必填。
 
@@ -253,5 +255,7 @@ Adapter 工厂允许通过 `extras` 注入关系端口。业务路径、认证�
 不透明宿主引用只存在运行值和 Adapter 上下文中，不写入设计文档、Schema、演示数据、日志或公开截图。仓库关系演示仅使用公开虚拟记录。
 
 交付前使用格式、Lint、类型检查、生产构建、真实浏览器人工操作及仓库外 tarball 消费构建。应人工核对不同父行下的孙表隔离、复制与弹层取消、共享目标的独立授权编辑、分页选择、身份回填、拒绝后保留输入、未知结果恢复和连续保存不重放。仓库不新增或运行自动化测试代码。
+
+OCR、定位、扫码与签名的设计配置和 Adapter 注入见[采集组件](guide/capture.md)。
 
 本轮组件验收、仓库验收、消费工程验收与未完成项见[Issue #1 0.3.0 验收记录](acceptance/issue-1-0.3.0.md)。

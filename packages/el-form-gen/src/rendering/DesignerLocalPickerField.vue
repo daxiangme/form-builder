@@ -13,14 +13,15 @@
       </template>
       <span v-else>{{ placeholder }}</span>
     </div>
-    <ElButton :disabled="disabled || !adapter" @click="openPicker">
-      <DxSvgIcon :icon="icon" />{{ buttonText }}
-    </ElButton>
+    <FormButton v-if="!disabled" :disabled="!adapter" :icon="icon" @click="openPicker">
+      {{ buttonText }}
+    </FormButton>
 
     <DModal
       v-model="visible"
       :title="buttonText"
       width="720px"
+      :radius="controlRadius"
       confirm-text="确认选择"
       @confirm="confirmSelection"
     >
@@ -53,8 +54,13 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import type { FormDirectoryAdapter, FormRuntimeAdapterContext } from '@daxiangme/form-core'
+import type {
+  DesignerRadiusValue,
+  FormDirectoryAdapter,
+  FormRuntimeAdapterContext,
+} from '@daxiangme/form-core'
 import DModal from '../infrastructure/FormModalShell.vue'
+import FormButton from '../infrastructure/FormButton.vue'
 import DxSvgIcon from '../infrastructure/FormIcon.vue'
 
 defineOptions({ name: 'DesignerLocalPickerField' })
@@ -74,6 +80,7 @@ const props = defineProps<{
   multiple: boolean
   adapter?: FormDirectoryAdapter
   adapterContext: FormRuntimeAdapterContext
+  controlRadius?: DesignerRadiusValue
 }>()
 const emit = defineEmits<{
   'update:modelValue': [value: unknown]

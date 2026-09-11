@@ -10,9 +10,9 @@
   >
     <template v-if="editingFlow">
       <div class="designer-advanced-behavior__event-heading">
-        <ElButton text @click="finishEditingFlow"
-          ><DxSvgIcon icon="ri:arrow-left-line" />返回高级配置</ElButton
-        >
+        <FormButton text icon="ri:arrow-left-line" @click="finishEditingFlow">
+          返回高级配置
+        </FormButton>
         <div>
           <strong>{{ editingFlow.name }}</strong
           ><small>事件步骤与字段行为将在保存配置时原子提交</small>
@@ -186,7 +186,7 @@
         >
           <template #add>
             <ElDropdown trigger="click" @command="addValidationRule">
-              <ElButton plain><DxSvgIcon icon="ri:add-line" />添加规则</ElButton>
+              <FormButton plain icon="ri:add-line">添加规则</FormButton>
               <template #dropdown>
                 <ElDropdownMenu>
                   <ElDropdownItem
@@ -351,7 +351,7 @@
 <script setup lang="ts">
 import { computed, ref, reactive, watch } from 'vue'
 import DModal from '../infrastructure/FormModalShell.vue'
-import DxSvgIcon from '../infrastructure/FormIcon.vue'
+import FormButton from '../infrastructure/FormButton.vue'
 import { createDefaultDesignerFieldBehavior } from '@daxiangme/form-core'
 import {
   createDesignerStateRule,

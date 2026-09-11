@@ -28,9 +28,35 @@
           :value="option.value"
         />
       </ElSelect>
+      <ElSelect
+        v-if="workspace === 'RUNTIME'"
+        v-model="captureScenario"
+        class="playground-policy"
+        aria-label="采集验收场景"
+      >
+        <ElOption
+          v-for="option in captureScenarioOptions"
+          :key="option.value"
+          :label="option.label"
+          :value="option.value"
+        />
+      </ElSelect>
       <ElSelect v-model="device" aria-label="视口">
         <ElOption label="桌面" value="desktop" />
         <ElOption label="移动" value="mobile" />
+      </ElSelect>
+      <ElSelect
+        v-if="workspace === 'DESIGN'"
+        v-model="catalogScenario"
+        class="playground-catalog"
+        aria-label="设计器目录场景"
+      >
+        <ElOption
+          v-for="option in catalogScenarioOptions"
+          :key="option.value"
+          :label="option.label"
+          :value="option.value"
+        />
       </ElSelect>
       <ElSelect
         :model-value="controlRadius"
@@ -53,18 +79,33 @@
     <section v-if="workspace === 'DESIGN'" class="playground-workspace is-designer">
       <ElFormDesigner
         v-model="document"
+        :catalogs="designerCatalogs"
         :adapters="localAdapter.adapters"
         :adapter-context="adapterContext"
         @save-request="showMessage('设计文档已交给宿主保存')"
         @export-request="showMessage('设计文档已交给宿主导出')"
-      />
+      >
+        <template #header-leading="{ documentName, dirty }">
+          <span class="playground-designer-title" :title="documentName">
+            {{ documentName }}
+            <i v-if="dirty" aria-label="存在未保存修改" />
+          </span>
+        </template>
+      </ElFormDesigner>
     </section>
 
     <section v-else-if="workspace === 'RELATION_DESIGN'" class="playground-workspace is-designer">
       <ElFormDesigner
         v-model="relationDocument"
         @save-request="showMessage('关系设计文档已交给宿主保存')"
-      />
+      >
+        <template #header-leading="{ documentName, dirty }">
+          <span class="playground-designer-title" :title="documentName">
+            {{ documentName }}
+            <i v-if="dirty" aria-label="存在未保存修改" />
+          </span>
+        </template>
+      </ElFormDesigner>
     </section>
     <section v-else-if="workspace === 'RELATIONS'" class="playground-workspace is-runtime">
       <RelationPlayground :device="device" />
@@ -79,7 +120,7 @@
         :overlay-only="Boolean(activeModule)"
         :field-runtime-policy="fieldRuntimePolicy"
         :field-runtime-policy-fallback="fieldRuntimePolicyFallback"
-        :adapters="localAdapter.adapters"
+        :adapters="runtimeAdapters"
         :adapter-context="adapterContext"
         show-toolbar
         @submit="handleSubmit"
@@ -105,17 +146,23 @@ import {
   designerRadiusValueLabel,
   includeDesignerCurrentOption,
   parseDesignerRadiusInput,
+  resolveDesignerCatalogComponents,
+  type DesignerLayoutNode,
   type DesignerDevice,
   type DesignerDocument,
   type DesignerRuntimeMode,
   type DesignerRuntimeValueStore,
   type DesignerSubmissionProjection,
+  type FormDesignerCatalogs,
   type FormFieldAccessFallback,
   type FormFieldRuntimePolicyMap,
 } from 'el-form-gen'
 
 type RuntimeMode = Exclude<DesignerRuntimeMode, 'DESIGN'>
-type PolicyScenario = 'SCHEMA' | 'ALL_EDITABLE' | 'MIXED' | 'EMPTY' | 'PARTIAL_EDITABLE'
+type PolicyScenario =
+  'SCHEMA' | 'ALL_EDITABLE' | 'MIXED' | 'EMPTY' | 'PARTIAL_EDITABLE' | 'HOST_REQUIRED'
+type CatalogScenario = 'NONE' | 'COMPONENTS' | 'CAPABILITIES'
+type CaptureScenario = 'READY' | 'SCAN_UNREADY'
 
 const workspaceOptions = [
   { label: '设计器', value: 'DESIGN' },
@@ -129,13 +176,25 @@ const policyScenarioOptions: Array<{ label: string; value: PolicyScenario }> = [
   { label: '权威投影 · 三态权限', value: 'MIXED' },
   { label: '部分投影 · 回退可编辑', value: 'PARTIAL_EDITABLE' },
   { label: '权威投影 · 空映射失败关闭', value: 'EMPTY' },
+  { label: '权威投影 · 宿主强制必填', value: 'HOST_REQUIRED' },
+]
+const captureScenarioOptions: Array<{ label: string; value: CaptureScenario }> = [
+  { label: '采集端口就绪', value: 'READY' },
+  { label: '扫码未就绪', value: 'SCAN_UNREADY' },
+]
+const catalogScenarioOptions: Array<{ label: string; value: CatalogScenario }> = [
+  { label: '无目录', value: 'NONE' },
+  { label: '仅 components 三态', value: 'COMPONENTS' },
+  { label: '叠 capabilities.scan=false', value: 'CAPABILITIES' },
 ]
 const workspace = ref<'DESIGN' | 'RUNTIME' | 'RELATION_DESIGN' | 'RELATIONS'>('DESIGN')
+const catalogScenario = ref<CatalogScenario>('NONE')
 const dark = ref(false)
 const device = ref<DesignerDevice>('desktop')
 const activeModule = ref('')
 const runtimeMode = ref<RuntimeMode>('CREATE')
 const policyScenario = ref<PolicyScenario>('SCHEMA')
+const captureScenario = ref<CaptureScenario>('READY')
 const runtimeValue = ref<DesignerRuntimeValueStore>({ fields: {}, collections: {} })
 const document = ref<DesignerDocument>(createPlaygroundDocument())
 const relationDocument = ref<DesignerDocument>(createRelationPlaygroundDocument())
@@ -158,6 +217,28 @@ const fieldRuntimePolicy = computed<FormFieldRuntimePolicyMap | undefined>(() =>
 const fieldRuntimePolicyFallback = computed<FormFieldAccessFallback | undefined>(() =>
   policyScenario.value === 'PARTIAL_EDITABLE' ? 'EDITABLE' : undefined,
 )
+const designerCatalogs = computed<FormDesignerCatalogs | undefined>(() =>
+  buildDesignerCatalogs(catalogScenario.value),
+)
+const runtimeAdapters = computed(() => {
+  if (captureScenario.value !== 'SCAN_UNREADY' || !localAdapter.adapters.scan) {
+    return localAdapter.adapters
+  }
+  return {
+    ...localAdapter.adapters,
+    scan: {
+      ...localAdapter.adapters.scan,
+      readiness: () => ({
+        ready: false,
+        unreadyReason: '扫码枪未连接（验收场景）',
+      }),
+      subscribeReadiness(listener: (state: { ready: boolean; unreadyReason?: string }) => void) {
+        listener({ ready: false, unreadyReason: '扫码枪未连接（验收场景）' })
+        return () => undefined
+      },
+    },
+  }
+})
 
 watch(dark, (enabled) => globalThis.document.documentElement.classList.toggle('dark', enabled), {
   immediate: true,
@@ -183,6 +264,35 @@ function handleSubmit(projection: DesignerSubmissionProjection): void {
   showMessage(`宿主已收到提交投影，排除 ${projection.excludedFieldIds.length} 个字段`)
 }
 
+function buildDesignerCatalogs(scenario: CatalogScenario): FormDesignerCatalogs | undefined {
+  if (scenario === 'NONE') return undefined
+  const components = resolveDesignerCatalogComponents().components.map((item) => {
+    if (item.componentType === 'scan-code') {
+      return {
+        componentType: 'scan-code',
+        availability: 'CONDITIONAL' as const,
+        unavailableReason: '需要 BarcodeDetector 支持',
+      }
+    }
+    if (item.componentType === 'ocr') {
+      return {
+        componentType: 'ocr',
+        availability: 'UNAVAILABLE' as const,
+        unavailableReason: '当前目录未开放 OCR',
+      }
+    }
+    return {
+      componentType: item.componentType,
+      availability: item.availability,
+      unavailableReason: item.unavailableReason || undefined,
+    }
+  })
+  if (scenario === 'CAPABILITIES') {
+    return { components, capabilities: { scan: false } }
+  }
+  return { components }
+}
+
 function buildFieldRuntimePolicy(
   formDocument: DesignerDocument,
   scenario: PolicyScenario,
@@ -194,6 +304,17 @@ function buildFieldRuntimePolicy(
   if (scenario === 'PARTIAL_EDITABLE') {
     const first = rootFields[0]
     return first ? { [first.id]: { accessLevel: 'READ_ONLY' } } : {}
+  }
+  if (scenario === 'HOST_REQUIRED') {
+    const target = rootFields.find((field) => field.required !== true) ?? rootFields[0]
+    return Object.fromEntries(
+      formDocument.dataSchema.fields.map((field) => [
+        field.id,
+        field.id === target?.id
+          ? { accessLevel: 'EDITABLE' as const, required: true }
+          : { accessLevel: 'EDITABLE' as const },
+      ]),
+    )
   }
   return Object.fromEntries(
     formDocument.dataSchema.fields.map((field) => {
@@ -216,6 +337,64 @@ function buildFieldRuntimePolicy(
   )
 }
 
+function appendCaptureDemoFields(document: DesignerDocument): void {
+  const recognizedName = createNodeFromComponent(document, 'text', { label: '识别姓名' })
+  const recognizedAmount = createNodeFromComponent(document, 'text', { label: '识别金额' })
+  const locationAddress = createNodeFromComponent(document, 'text', { label: '定位地址' })
+  const locationRegion = createNodeFromComponent(document, 'text', { label: '定位省市区' })
+  const inlineSignature = createNodeFromComponent(document, 'signature', { label: '内联签名' })
+  const assetSignature = createNodeFromComponent(document, 'signature', {
+    label: '文件签名',
+    configuration: { storageMode: 'ASSET' },
+  })
+  const combinedOpinion = createNodeFromComponent(document, 'opinion', {
+    label: '审批意见',
+    configuration: { mode: 'COMBINED' },
+  })
+  const location = createNodeFromComponent(document, 'position', {
+    label: '现场定位',
+    configuration: {
+      allowManualPick: true,
+      showCoordinates: true,
+      fieldMappings: [
+        { sourceKey: 'address', targetFieldId: layoutFieldId(locationAddress) },
+        { sourceKey: 'province', targetFieldId: layoutFieldId(locationRegion) },
+      ].filter((item) => item.targetFieldId),
+    },
+  })
+  const ocr = createNodeFromComponent(document, 'ocr', {
+    label: '票据识别',
+    configuration: {
+      retainOriginal: true,
+      resultKeys: [
+        { key: 'name', name: '姓名' },
+        { key: 'amount', name: '金额' },
+      ],
+      fieldMappings: [
+        { sourceKey: 'name', targetFieldId: layoutFieldId(recognizedName) },
+        { sourceKey: 'amount', targetFieldId: layoutFieldId(recognizedAmount) },
+      ].filter((item) => item.targetFieldId),
+    },
+  })
+  for (const node of [
+    recognizedName,
+    recognizedAmount,
+    locationAddress,
+    locationRegion,
+    inlineSignature,
+    assetSignature,
+    combinedOpinion,
+    location,
+    ocr,
+  ]) {
+    if (node) document.uiSchema.root.push(node)
+  }
+}
+
+function layoutFieldId(node: DesignerLayoutNode | undefined): string {
+  return node?.nodeType === 'FIELD' ? node.fieldId : ''
+}
+
 function createPlaygroundDocument(): DesignerDocument {
   const value = createDemoDesignerDocument('dx-form-playground')
   value.name = 'Form Gen 独立组件示例'
@@ -225,6 +404,12 @@ function createPlaygroundDocument(): DesignerDocument {
       'expense-application-master-data-model-very-long-identity-for-narrow-inspector-2026-candidate',
     sourceRevision: 17,
   }
+  const scanCode = createNodeFromComponent(value, 'scan-code', {
+    label: '资产扫码',
+    configuration: { allowManualInput: true },
+  })
+  if (scanCode) value.uiSchema.root.push(scanCode)
+  appendCaptureDemoFields(value)
   const typeField = value.dataSchema.fields.find((field) => field.label === '申请类型')
   const noteField = value.dataSchema.fields.find((field) => field.label === '申请说明')
   if (noteField) noteField.required = true

@@ -6,6 +6,8 @@ import type {
   DesignerExpressionRuntimeContext,
   DesignerField,
 } from './types'
+import { findDesignerComponent } from './component-registry'
+import { resolveDesignerFieldValueKeys } from './field-assignment'
 
 const MAX_EXPRESSION_DEPTH = 20
 const MAX_EXPRESSION_NODES = 200
@@ -23,17 +25,18 @@ export function evaluateDesignerExpression(
     }
     if (node.kind === 'LITERAL') return node.value
     if (node.kind === 'FIELD') {
-      if (runtime.readField) return runtime.readField(node.fieldId, node.scope, node.ancestorDepth)
-      if (node.scope === 'ANCESTOR') {
-        const depth = node.ancestorDepth
-        if (!Number.isInteger(depth) || !depth || depth < 1) throw new Error('祖先层数不正确')
-        const ancestor = runtime.ancestors?.[depth - 1]
-        if (!ancestor) throw new Error('祖先作用域不存在')
-        return ancestor[node.fieldId]
+      const fieldValue = runtime.readField
+        ? runtime.readField(node.fieldId, node.scope, node.ancestorDepth)
+        : node.scope === 'ANCESTOR'
+          ? readAncestorField(runtime, node.fieldId, node.ancestorDepth)
+          : node.scope === 'CURRENT_ROW'
+            ? runtime.currentRow?.[node.fieldId]
+            : runtime.fields[node.fieldId]
+      if (!node.valueKey) return fieldValue
+      if (typeof fieldValue !== 'object' || fieldValue === null || Array.isArray(fieldValue)) {
+        return undefined
       }
-      return node.scope === 'CURRENT_ROW'
-        ? runtime.currentRow?.[node.fieldId]
-        : runtime.fields[node.fieldId]
+      return (fieldValue as Record<string, unknown>)[node.valueKey]
     }
     if (node.kind === 'VARIABLE') return runtime.variables[node.variableCode]
     if (node.kind === 'CONTEXT') return runtime.context[node.key]
@@ -112,7 +115,12 @@ export function diagnoseDesignerExpression(
       return
     }
     if (node.kind === 'FIELD') {
-      unknownKeys(node, ['kind', 'fieldId', 'scope', 'ancestorDepth'], nodePath, diagnostics)
+      unknownKeys(
+        node,
+        ['kind', 'fieldId', 'scope', 'ancestorDepth', 'valueKey'],
+        nodePath,
+        diagnostics,
+      )
       if (typeof node.fieldId !== 'string' || !fieldIds.has(node.fieldId)) {
         diagnostics.push(
           error('EXPRESSION_FIELD', '表达式引用了不存在的字段', `${nodePath}.fieldId`),
@@ -203,6 +211,7 @@ export function diagnoseDesignerExpression(
             error('EXPRESSION_SCOPE', '主表作用域不能读取子实体字段', `${nodePath}.scope`),
           )
         }
+        diagnoseExpressionValueKey(node, field, nodePath, diagnostics)
       }
       return
     }
@@ -421,6 +430,66 @@ function hasAncestorEntity(
     if (codes.size === 0) return false
   }
   return codes.has(targetEntityCode)
+}
+
+function readAncestorField(
+  runtime: DesignerExpressionRuntimeContext,
+  fieldId: string,
+  ancestorDepth: number | undefined,
+): unknown {
+  if (!Number.isInteger(ancestorDepth) || !ancestorDepth || ancestorDepth < 1) {
+    throw new Error('祖先层数不正确')
+  }
+  const ancestor = runtime.ancestors?.[ancestorDepth - 1]
+  if (!ancestor) throw new Error('祖先作用域不存在')
+  return ancestor[fieldId]
+}
+
+function diagnoseExpressionValueKey(
+  node: Record<string, unknown>,
+  field: DesignerField | undefined,
+  nodePath: string,
+  diagnostics: DesignerDiagnostic[],
+): void {
+  if (node.valueKey === undefined) return
+  if (typeof node.valueKey !== 'string' || !node.valueKey) {
+    diagnostics.push(
+      error('EXPRESSION_FIELD_VALUE_KEY', '对象字段属性名不正确', `${nodePath}.valueKey`),
+    )
+    return
+  }
+  if (!field) return
+  const registration = findDesignerComponent(field.componentType)
+  const keys = resolveDesignerFieldValueKeys(field, registration?.valueKeys)
+  if (keys.length === 0) {
+    if (field.componentType === 'ocr') {
+      diagnostics.push(
+        error(
+          'EXPRESSION_FIELD_VALUE_KEY',
+          'OCR 字段尚未声明接口返回值，不能读取属性',
+          `${nodePath}.valueKey`,
+        ),
+      )
+      return
+    }
+    diagnostics.push(
+      error(
+        'EXPRESSION_FIELD_VALUE_KEY',
+        `${field.label}不是对象值字段，不能读取属性`,
+        `${nodePath}.valueKey`,
+      ),
+    )
+    return
+  }
+  if (!keys.includes(node.valueKey)) {
+    diagnostics.push(
+      error(
+        'EXPRESSION_FIELD_VALUE_KEY',
+        `属性 ${node.valueKey} 不属于 ${field.label}`,
+        `${nodePath}.valueKey`,
+      ),
+    )
+  }
 }
 
 function validFunctionArgumentCount(value: unknown, count: number): boolean {

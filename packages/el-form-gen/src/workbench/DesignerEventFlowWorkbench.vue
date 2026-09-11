@@ -2,7 +2,7 @@
   <div class="designer-event-flow-workbench">
     <aside>
       <ElDropdown v-if="allowCreate" trigger="click" @command="createFlow">
-        <ElButton type="primary" plain><DxSvgIcon icon="ri:add-line" />创建事件</ElButton>
+        <FormButton type="primary" plain icon="ri:add-line">创建事件</FormButton>
         <template #dropdown>
           <ElDropdownMenu>
             <ElDropdownItem command="FORM">表单事件</ElDropdownItem>
@@ -24,15 +24,14 @@
           ><strong>{{ flow.name }}</strong
           ><small>{{ flowLabel(flow) }}</small></span
         >
-        <ElButton
+        <FormButton
           v-if="allowDelete"
           text
           type="danger"
           aria-label="删除事件"
+          icon="ri:delete-bin-line"
           @click.stop="removeFlow(flow.id)"
-        >
-          <DxSvgIcon icon="ri:delete-bin-line" />
-        </ElButton>
+        />
       </button>
       <ElEmpty v-if="visibleFlows.length === 0" description="尚未创建事件" :image-size="48" />
     </aside>
@@ -328,9 +327,12 @@
           <article v-for="(branch, index) in selectedStep.branches" :key="branch.id">
             <div>
               <ElInput v-model="branch.name" />
-              <ElButton text type="danger" @click="selectedStep.branches.splice(index, 1)">
-                <DxSvgIcon icon="ri:delete-bin-line" />
-              </ElButton>
+              <FormButton
+                text
+                type="danger"
+                icon="ri:delete-bin-line"
+                @click="selectedStep.branches.splice(index, 1)"
+              />
             </div>
             <DesignerExpressionEditor
               v-model="branch.condition"
@@ -362,6 +364,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import DxSvgIcon from '../infrastructure/FormIcon.vue'
+import FormButton from '../infrastructure/FormButton.vue'
 import { findDesignerComponent } from '@daxiangme/form-core'
 import { findDesignerNode } from '@daxiangme/form-core'
 import {

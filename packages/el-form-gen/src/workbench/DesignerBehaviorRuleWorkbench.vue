@@ -6,9 +6,7 @@
         ><small>{{ description }}</small>
       </div>
       <slot name="add"
-        ><ElButton plain @click="$emit('add')"
-          ><DxSvgIcon icon="ri:add-line" />添加规则</ElButton
-        ></slot
+        ><FormButton plain icon="ri:add-line" @click="$emit('add')">添加规则</FormButton></slot
       >
     </header>
     <div v-if="!empty" class="designer-behavior-rule-workbench__body">
@@ -20,7 +18,7 @@
 </template>
 
 <script setup lang="ts">
-import DxSvgIcon from '../infrastructure/FormIcon.vue'
+import FormButton from '../infrastructure/FormButton.vue'
 
 defineOptions({ name: 'DesignerBehaviorRuleWorkbench' })
 defineProps<{ title: string; description: string; empty: boolean }>()

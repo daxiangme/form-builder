@@ -1,46 +1,35 @@
 <template>
-  <header class="designer-command-bar">
-    <div class="designer-command-bar__leading">
+  <header class="designer-command-bar" :class="`is-density-${density}`">
+    <div v-if="$slots.leading" class="designer-command-bar__leading">
       <slot name="leading" />
-      <span class="designer-command-bar__title" :title="documentName">
-        {{ documentName }}
-        <i v-if="dirty" aria-label="存在未保存修改" />
-      </span>
     </div>
-    <div class="designer-command-bar__tools">
+    <div v-if="density !== 'minimal'" class="designer-command-bar__tools">
       <ElSelect
+        v-if="density === 'full'"
         class="designer-command-bar__device"
         :model-value="viewport"
         aria-label="画布视口"
         @update:model-value="changeViewport"
       >
-        <ElOption label="自适应 PC" value="FIT" />
-        <ElOption label="PC · 1920" value="PC_1920" />
-        <ElOption label="PC · 1440" value="PC_1440" />
-        <ElOption label="PC · 1280" value="PC_1280" />
-        <ElOption label="PC · 1024" value="PC_1024" />
-        <ElOption label="移动 · 440" value="MOBILE_440" />
-        <ElOption label="移动 · 375" value="MOBILE_375" />
+        <ElOption v-for="option in viewportOptions" :key="option.value" v-bind="option" />
       </ElSelect>
-      <ElButtonGroup>
+      <ElButtonGroup v-if="density === 'full'">
         <ElTooltip content="显示或隐藏栅格">
-          <ElButton
+          <FormButton
             :type="gridVisible ? 'primary' : 'default'"
             plain
             aria-label="切换栅格"
+            icon="ri:grid-line"
             @click="emit('toggle-grid')"
-          >
-            <DxSvgIcon icon="ri:grid-line" />
-          </ElButton>
+          />
         </ElTooltip>
         <ElTooltip content="缩小画布">
-          <ElButton
+          <FormButton
             :disabled="zoom <= 50"
             aria-label="缩小画布"
+            icon="ri:zoom-out-line"
             @click="emit('update:zoom', zoom - 10)"
-          >
-            <DxSvgIcon icon="ri:zoom-out-line" />
-          </ElButton>
+          />
         </ElTooltip>
         <ElButton
           class="designer-command-bar__zoom"
@@ -50,66 +39,109 @@
           {{ zoom }}%
         </ElButton>
         <ElTooltip content="放大画布">
-          <ElButton
+          <FormButton
             :disabled="zoom >= 150"
             aria-label="放大画布"
+            icon="ri:zoom-in-line"
             @click="emit('update:zoom', zoom + 10)"
-          >
-            <DxSvgIcon icon="ri:zoom-in-line" />
-          </ElButton>
+          />
         </ElTooltip>
         <ElTooltip content="适应可用宽度">
-          <ElButton aria-label="适应可用宽度" @click="emit('fit')">
-            <DxSvgIcon icon="ri:aspect-ratio-line" />
-          </ElButton>
+          <FormButton aria-label="适应可用宽度" icon="ri:aspect-ratio-line" @click="emit('fit')" />
         </ElTooltip>
         <ElTooltip content="等分当前容器字段">
-          <ElButton aria-label="等分当前容器字段" @click="emit('equal-layout')">
-            <DxSvgIcon icon="ri:layout-column-line" />
-          </ElButton>
+          <FormButton
+            aria-label="等分当前容器字段"
+            icon="ri:layout-column-line"
+            @click="emit('equal-layout')"
+          />
         </ElTooltip>
       </ElButtonGroup>
       <ElButtonGroup>
         <ElTooltip content="撤销（⌘Z）">
-          <ElButton :disabled="!canUndo" aria-label="撤销" @click="emit('undo')">
-            <DxSvgIcon icon="ri:arrow-go-back-line" />
-          </ElButton>
+          <FormButton
+            :disabled="!canUndo"
+            aria-label="撤销"
+            icon="ri:arrow-go-back-line"
+            @click="emit('undo')"
+          />
         </ElTooltip>
         <ElTooltip content="重做（⇧⌘Z）">
-          <ElButton :disabled="!canRedo" aria-label="重做" @click="emit('redo')">
-            <DxSvgIcon icon="ri:arrow-go-forward-line" />
-          </ElButton>
+          <FormButton
+            :disabled="!canRedo"
+            aria-label="重做"
+            icon="ri:arrow-go-forward-line"
+            @click="emit('redo')"
+          />
         </ElTooltip>
       </ElButtonGroup>
     </div>
     <div class="designer-command-bar__actions">
-      <ElSpace :size="12">
-        <ElButton @click="emit('preview')"><DxSvgIcon icon="ri:eye-line" />预览</ElButton>
-        <ElButton type="primary" @click="emit('save')"
-          ><DxSvgIcon icon="ri:save-3-line" />保存</ElButton
-        >
+      <ElSpace :size="density === 'minimal' ? 8 : 12">
+        <FormButton icon="ri:eye-line" aria-label="预览" @click="emit('preview')">
+          <span v-if="density !== 'minimal'">预览</span>
+        </FormButton>
+        <FormButton type="primary" icon="ri:save-3-line" aria-label="保存" @click="emit('save')">
+          <span v-if="density !== 'minimal'">保存</span>
+        </FormButton>
         <ElDropdown trigger="click" @command="handleMoreCommand">
-          <ElButton aria-label="更多设计操作"><DxSvgIcon icon="ri:more-fill" /></ElButton>
+          <FormButton aria-label="更多设计操作" icon="ri:more-fill" />
           <template #dropdown>
             <ElDropdownMenu>
-              <ElDropdownItem command="import"
-                ><DxSvgIcon icon="ri:upload-2-line" />导入 JSON</ElDropdownItem
-              >
-              <ElDropdownItem command="export"
-                ><DxSvgIcon icon="ri:download-2-line" />导出 JSON</ElDropdownItem
-              >
-              <ElDropdownItem command="schema"
-                ><DxSvgIcon icon="ri:code-s-slash-line" />Schema 工具</ElDropdownItem
-              >
-              <ElDropdownItem command="batch-defaults"
-                ><DxSvgIcon icon="ri:list-settings-line" />批量默认值</ElDropdownItem
-              >
-              <ElDropdownItem command="print"
-                ><DxSvgIcon icon="ri:printer-line" />打印预览</ElDropdownItem
-              >
-              <ElDropdownItem divided command="clear"
-                ><DxSvgIcon icon="ri:delete-bin-line" />清空设计</ElDropdownItem
-              >
+              <template v-if="density !== 'full'">
+                <ElDropdownItem
+                  v-for="option in viewportOptions"
+                  :key="option.value"
+                  :command="`viewport:${option.value}`"
+                  :class="{ 'is-active': viewport === option.value }"
+                >
+                  <DxSvgIcon icon="ri:aspect-ratio-line" />视口 · {{ option.label }}
+                </ElDropdownItem>
+                <ElDropdownItem command="toggle-grid">
+                  <DxSvgIcon icon="ri:grid-line" />{{ gridVisible ? '隐藏栅格' : '显示栅格' }}
+                </ElDropdownItem>
+                <ElDropdownItem command="zoom-out" :disabled="zoom <= 50">
+                  <DxSvgIcon icon="ri:zoom-out-line" />缩小画布
+                </ElDropdownItem>
+                <ElDropdownItem command="reset-zoom">
+                  <DxSvgIcon icon="ri:aspect-ratio-line" />恢复 100%
+                </ElDropdownItem>
+                <ElDropdownItem command="zoom-in" :disabled="zoom >= 150">
+                  <DxSvgIcon icon="ri:zoom-in-line" />放大画布
+                </ElDropdownItem>
+                <ElDropdownItem command="fit">
+                  <DxSvgIcon icon="ri:aspect-ratio-line" />适应可用宽度
+                </ElDropdownItem>
+                <ElDropdownItem command="equal-layout">
+                  <DxSvgIcon icon="ri:layout-column-line" />等分当前容器字段
+                </ElDropdownItem>
+              </template>
+              <template v-if="density === 'minimal'">
+                <ElDropdownItem command="undo" :disabled="!canUndo">
+                  <DxSvgIcon icon="ri:arrow-go-back-line" />撤销
+                </ElDropdownItem>
+                <ElDropdownItem command="redo" :disabled="!canRedo">
+                  <DxSvgIcon icon="ri:arrow-go-forward-line" />重做
+                </ElDropdownItem>
+              </template>
+              <ElDropdownItem command="import" :divided="density !== 'full'">
+                <DxSvgIcon icon="ri:upload-2-line" />导入 JSON
+              </ElDropdownItem>
+              <ElDropdownItem command="export">
+                <DxSvgIcon icon="ri:download-2-line" />导出 JSON
+              </ElDropdownItem>
+              <ElDropdownItem command="schema">
+                <DxSvgIcon icon="ri:code-s-slash-line" />Schema 工具
+              </ElDropdownItem>
+              <ElDropdownItem command="batch-defaults">
+                <DxSvgIcon icon="ri:list-settings-line" />批量默认值
+              </ElDropdownItem>
+              <ElDropdownItem command="print">
+                <DxSvgIcon icon="ri:printer-line" />打印预览
+              </ElDropdownItem>
+              <ElDropdownItem divided command="clear">
+                <DxSvgIcon icon="ri:delete-bin-line" />清空设计
+              </ElDropdownItem>
             </ElDropdownMenu>
           </template>
         </ElDropdown>
@@ -120,19 +152,41 @@
 
 <script setup lang="ts">
 import DxSvgIcon from '../infrastructure/FormIcon.vue'
+import FormButton from '../infrastructure/FormButton.vue'
 import type { DesignerCanvasViewportPreset } from './workbench-preferences'
+
+/** 顶栏按设计器实际宽度收纳次要操作，避免窄屏裁切。 */
+export type DesignerCommandBarDensity = 'full' | 'compact' | 'minimal'
+
+const viewportOptions: { label: string; value: DesignerCanvasViewportPreset }[] = [
+  { label: '自适应 PC', value: 'FIT' },
+  { label: 'PC · 1920', value: 'PC_1920' },
+  { label: 'PC · 1440', value: 'PC_1440' },
+  { label: 'PC · 1280', value: 'PC_1280' },
+  { label: 'PC · 1024', value: 'PC_1024' },
+  { label: '移动 · 440', value: 'MOBILE_440' },
+  { label: '移动 · 375', value: 'MOBILE_375' },
+]
 
 defineOptions({ name: 'DesignerCommandBar' })
 
-defineProps<{
-  documentName: string
-  dirty: boolean
-  canUndo: boolean
-  canRedo: boolean
-  viewport: DesignerCanvasViewportPreset
-  zoom: number
-  gridVisible: boolean
+defineSlots<{
+  /** 顶栏左侧宿主区；窄屏收纳工具按钮时仍保留。 */
+  leading?: () => unknown
 }>()
+
+const props = withDefaults(
+  defineProps<{
+    canUndo: boolean
+    canRedo: boolean
+    viewport: DesignerCanvasViewportPreset
+    zoom: number
+    gridVisible: boolean
+    /** 顶栏密度；由工作区宽度计算，不跟浏览器窗口走。 */
+    density?: DesignerCommandBarDensity
+  }>(),
+  { density: 'full' },
+)
 const emit = defineEmits<{
   'update:viewport': [viewport: DesignerCanvasViewportPreset]
   'update:zoom': [zoom: number]
@@ -161,6 +215,19 @@ function changeViewport(value: string | number | boolean | undefined): void {
 }
 
 function handleMoreCommand(command: string | number | object): void {
+  if (typeof command !== 'string') return
+  if (command.startsWith('viewport:')) {
+    changeViewport(command.slice('viewport:'.length))
+    return
+  }
+  if (command === 'toggle-grid') emit('toggle-grid')
+  if (command === 'zoom-out') emit('update:zoom', props.zoom - 10)
+  if (command === 'zoom-in') emit('update:zoom', props.zoom + 10)
+  if (command === 'reset-zoom') emit('update:zoom', 100)
+  if (command === 'fit') emit('fit')
+  if (command === 'equal-layout') emit('equal-layout')
+  if (command === 'undo') emit('undo')
+  if (command === 'redo') emit('redo')
   if (command === 'import') emit('import')
   if (command === 'export') emit('export')
   if (command === 'schema') emit('schema')
@@ -184,6 +251,14 @@ function handleMoreCommand(command: string | number | object): void {
   gap: var(--daxiang-form-space-3);
 }
 
+.designer-command-bar.is-density-compact {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
+.designer-command-bar.is-density-minimal {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
 .designer-command-bar__leading,
 .designer-command-bar__tools,
 .designer-command-bar__actions {
@@ -205,6 +280,10 @@ function handleMoreCommand(command: string | number | object): void {
   justify-content: flex-end;
 }
 
+.designer-command-bar.is-density-minimal .designer-command-bar__actions {
+  justify-self: end;
+}
+
 .designer-command-bar__device {
   width: 138px;
 }
@@ -214,35 +293,7 @@ function handleMoreCommand(command: string | number | object): void {
   font-variant-numeric: tabular-nums;
 }
 
-.designer-command-bar__title {
-  display: inline-flex;
-  min-width: 0;
-  align-items: center;
-  overflow: hidden;
-  font-weight: 600;
-  gap: var(--daxiang-form-space-2);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.designer-command-bar__title i {
-  width: 7px;
-  height: 7px;
-  flex: 0 0 auto;
-  background: var(--el-color-warning);
-  border-radius: 50%;
-}
-
-@media (width <= 1080px) {
-  .designer-command-bar {
-    grid-template-columns: minmax(0, 1fr) minmax(0, auto);
-    min-height: 96px;
-  }
-
-  .designer-command-bar__tools {
-    grid-column: 1 / -1;
-    grid-row: 2;
-    justify-self: center;
-  }
+.designer-command-bar :deep(.el-dropdown-menu__item.is-active) {
+  color: var(--el-color-primary);
 }
 </style>

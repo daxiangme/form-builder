@@ -10,7 +10,10 @@ export const DESIGNER_RADIUS_MAX_PX = 32
 export const DESIGNER_RADIUS_STEP_PX = 4
 
 /** 检查器常用的圆角预设，不含跟随系统。 */
-export const DESIGNER_RADIUS_PX_PRESETS = [0, 4, 8, 12] as const
+export const DESIGNER_RADIUS_PX_PRESETS = [0, 4, 8, 12, 16] as const
+
+/** 运行弹窗外壳在跟随系统时使用的默认圆角。 */
+export const DESIGNER_DIALOG_DEFAULT_RADIUS_PX = 16
 
 const LEGACY_RADIUS_PRESETS: Readonly<Record<string, DesignerRadiusValue>> = {
   THEME: 'THEME',
@@ -90,6 +93,19 @@ export function parseDesignerRadiusInput(raw: unknown): DesignerRadiusValue | un
  */
 export function designerRadiusCssValue(radius: DesignerRadiusValue): string {
   return radius === 'THEME' ? 'var(--el-border-radius-base)' : `${radius}px`
+}
+
+/**
+ * 将表单控件圆角解析为弹窗外壳圆角。
+ *
+ * 跟随系统时使用 16px，自定义像素与表单「控件圆角 / 全局圆角」保持一致。
+ *
+ * @param radius 表单 `appearance.controlRadius`
+ */
+export function resolveDesignerDialogRadius(radius: DesignerRadiusValue | undefined): number {
+  return typeof radius === 'number' && isDesignerRadiusPx(radius)
+    ? radius
+    : DESIGNER_DIALOG_DEFAULT_RADIUS_PX
 }
 
 /** 将圆角取值格式化为检查器可读文案。 */

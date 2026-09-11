@@ -13,7 +13,7 @@
 - 主表单、弹窗、抽屉、响应式栅格、行子表、块子表，以及嵌套关系与多对多。
 - 状态条件、公式计算、字段联动、验证规则与声明式事件流。
 - Element Plus 控件、浅色/深色主题和受控圆角样式。新建文档默认顶部左对齐；`THEME` 跟随宿主 `--el-border-radius-base`，自定义圆角为 0～32 的 4 的倍数 px，旧档位 `NONE` / `SMALL` / `BASE` / `LARGE` 解码为 0 / 4 / 8 / 12。
-- 文件、数据源、远程验证、OCR、扫码、定位、导航、动态选项、日期范围、验证码、个人签名、地区级联与宿主动作 Adapter 端口。
+- 文件、数据源、远程验证、OCR、扫码、定位、导航、动态选项、日期范围、验证码、个人签名、地区级联与宿主动作 Adapter 端口。采集组件的设计配置、注入与取值见[采集组件](docs/guide/capture.md)。
 - 运行模式 `CREATE` / `EDIT` / `READ_ONLY` / `DETAIL`，以及按字段 ID 生效的三态运行策略 `HIDDEN` / `READ_ONLY` / `EDITABLE`。
 - 现代 ESM、完整 TypeScript 类型声明和独立 CSS 产物。
 
@@ -103,6 +103,55 @@ function handleSave(nextDocument: DesignerDocument) {
 </style>
 ```
 
+顶栏左侧默认空白。需要标题、返回按钮等内容时，使用 `header-leading` 插槽；窄屏收纳设计器按钮时该插槽仍会保留。
+
+```vue
+<ElFormDesigner v-model="document" @save-request="handleSave">
+  <template #header-leading="{ documentName, dirty }">
+    <ElButton @click="goBack">返回</ElButton>
+    <span>{{ documentName }}</span>
+  </template>
+</ElFormDesigner>
+```
+
+`header-leading` 是 `ElFormDesigner` 目前唯一的插槽。作用域参数 `documentName` 是当前文档名称，`dirty` 表示是否有未保存修改。
+
+## 设计器组件目录
+
+`ElFormDesigner` 的 `catalogs.components` 是组件可用性的唯一真源。把服务端三态原样写入即可，不要把 `CONDITIONAL` 猜成 `capabilities` 布尔值，也不要维护 `scan` 对 `scan-code` 这类对照表。
+
+- `AVAILABLE`：设计态可选，不展示原因。
+- `CONDITIONAL`：设计态可选，必须展示 `unavailableReason`；不阻止保存。运行期是否可用由 Adapter、权限或设备决定。
+- `UNAVAILABLE`：设计态不可选；画布已有节点保留并告警。
+
+传入非空 `components` 时，未列出的内置组件会变为 `UNAVAILABLE`。覆盖个别组件时，请先从内置目录复制其余项：
+
+```ts
+import {
+  ElFormDesigner,
+  resolveDesignerCatalogComponents,
+  type FormDesignerCatalogs,
+} from 'el-form-gen'
+
+const catalogs: FormDesignerCatalogs = {
+  components: resolveDesignerCatalogComponents().components.map((item) =>
+    item.componentType === 'scan-code'
+      ? {
+          componentType: 'scan-code',
+          availability: 'CONDITIONAL',
+          unavailableReason: '需要 BarcodeDetector 支持',
+        }
+      : {
+          componentType: item.componentType,
+          availability: item.availability,
+          unavailableReason: item.unavailableReason || undefined,
+        },
+  ),
+}
+```
+
+`catalogs.capabilities` 已废弃：重叠键仅为兼容收紧（`false` 仍会收成 `CONDITIONAL` 并覆盖原因）；`remoteValidation`、`dataSource`、`dateRange` 不会影响组件目录，请改用 `adapters`。
+
 ## 渲染表单
 
 推荐用 `createDesignerRuntimeSession` 创建运行会话，再交给 `ElFormRenderer`。会话持有文档、值、模式和权限；保存走 `@submission` 回执，`@submit` 只表示前端投影，不代表持久化成功。
@@ -160,21 +209,24 @@ onBeforeUnmount(() => {
 - 键缺失走 `fieldRuntimePolicyFallback`，默认 `HIDDEN`（不渲染、不校验、不提交）。只传关心的字段时须显式设为 `EDITABLE`，此时未列出字段按文档可编辑并继承 `required`。
 - 非法 `accessLevel` 仍按 `HIDDEN` 失败关闭，不会被 fallback 放宽。
 - 权限只能收紧：设计时隐藏或只读的字段，运行时传入 `EDITABLE` 无效。
+- 宿主 `required: true` 只能加严必填；`false` 与缺省均忽略。隐藏或只读时仍自动取消必填。
 
-| 访问级别    | 渲染   | 校验               | 用户提交   | 输入 / 附件 / 子表 / 事件写入 |
-| ----------- | ------ | ------------------ | ---------- | ----------------------------- |
-| `HIDDEN`    | 不渲染 | 不校验             | 不提交     | 拒绝                          |
-| `READ_ONLY` | 只展示 | 不校验             | 不提交     | 拒绝                          |
-| `EDITABLE`  | 正常   | 设计文档必填与规则 | 按提交策略 | 允许                          |
+| 访问级别    | 渲染     | 校验               | 用户提交   | 输入 / 附件 / 子表 / 事件写入 |
+| ----------- | -------- | ------------------ | ---------- | ----------------------------- |
+| `HIDDEN`    | 不渲染   | 不校验             | 不提交     | 拒绝                          |
+| `READ_ONLY` | 详情内容 | 不校验             | 不提交     | 拒绝                          |
+| `EDITABLE`  | 正常     | 设计文档必填与规则 | 按提交策略 | 允许                          |
 
-必填只来自表单设计。隐藏或只读字段自动不必填。文档里的条件规则 `target: 'REQUIRED'` 仍然属于 Schema，不是宿主权限。同一字段在可编辑 / 只读 / 隐藏下的红星、校验、提交以及 `session.updateRuntimePolicy` 示例见[关系接入文档的权限投影](docs/relations.md#权限投影)。
+整表运行模式 `READ_ONLY` 仍保留表单布局，但去掉上传、扫码、签名、选点等操作按钮；普通字段显示为禁用控件，也可在设计器「只读展示」中改为纯文本。整表 `DETAIL` 是详情页。新增或编辑下某个字段宿主权限为 `READ_ONLY` 时，仅该字段按详情内容展示。
+
+必填来自表单设计，也可由宿主 `required: true` 加严。隐藏或只读字段自动不必填。文档里的条件规则 `target: 'REQUIRED'` 仍然属于 Schema。同一字段在可编辑 / 只读 / 隐藏下的红星、校验、提交以及 `session.updateRuntimePolicy` 示例见[关系接入文档的权限投影](docs/relations.md#权限投影)。
 
 公式（`FORMULA`）可以刷新只读字段的展示值，但不能放宽宿主权限。联动（`LINKAGE`）和事件流写入必须遵守 `HIDDEN` / `READ_ONLY`。文档 `display.readonly` 仍可进入提交；宿主 `READ_ONLY` 不会进入用户提交。
 
 ```ts
 const fieldRuntimePolicy: FormFieldRuntimePolicyMap = {
   [titleFieldId]: { accessLevel: 'EDITABLE' },
-  [amountFieldId]: { accessLevel: 'READ_ONLY' },
+  [amountFieldId]: { accessLevel: 'EDITABLE', required: true },
   [secretFieldId]: { accessLevel: 'HIDDEN' },
 }
 
@@ -215,6 +267,8 @@ session.updateRuntimePolicy({ fieldRuntimePolicy })
 
 上传字段的 Schema 只保存数量、大小、类型、显示方式和可选策略引用。文件值只持久化稳定 `assetId`，不会把 URL、Method、Token 或回调写入表单文档。
 
+OCR、定位、扫码和签名只在 Schema 里声明映射与输出字段，接口与凭据由宿主 Adapter 注入。设计配置、端口签名、提交值形态和 DX BPM `extras` 见[采集组件](docs/guide/capture.md)。
+
 本地预览工厂从主包导入：
 
 ```ts
@@ -234,8 +288,10 @@ import {
   createEmptyDesignerDocument,
   decodeDesignerDocument,
   diagnoseDesignerDocument,
+  resolveDesignerCatalogComponents,
   serializeDesignerDocument,
   type DesignerDocument,
+  type FormDesignerCatalogs,
   type FormRuntimeAdapters,
 } from 'el-form-gen'
 ```
